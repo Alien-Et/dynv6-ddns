@@ -2,8 +2,8 @@ name: Build and Release Dynv6 DDNS
 
 # 权限设置
 permissions:
-  contents: write # 允许写入仓库内容（包括 Release）
-  releases: write # 允许创建和修改 Release
+  contents: write # 允许写入仓库内容
+  releases: write # 允许创建 Release
 
 # 触发工作流的事件
 on:
@@ -11,7 +11,7 @@ on:
     branches:
       - main
     tags:
-      - 'v*.*.*' # 触发 Release 的标签格式，例如 v1.0.0
+      - 'v*.*.*' # 仅标签触发 Release
   pull_request:
     branches:
       - main
@@ -63,14 +63,25 @@ jobs:
             suffix: darwin-arm64
 
     steps:
+      # 检出代码
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 调试：列出文件以确认 main.go 和 go.mod 存在
+      - name: List repository files
+        run: ls -la
+
+      # 设置 Go 环境
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # 调试：检查 Go 版本
+      - name: Check Go version
+        run: go version
+
+      # 缓存 Go 模块
       - name: Cache Go modules
         uses: actions/cache@v4
         with:
@@ -81,6 +92,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      # 编译二进制文件
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
@@ -90,12 +102,14 @@ jobs:
           go build -o ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} main.go
           chmod +x ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} || true
 
+      # 可选：压缩二进制文件
       - name: Compress binary
         if: matrix.os == 'ubuntu-latest'
         run: |
-          sudo apt-get update && sudo apt-get install -y upx
-          upx --best ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} || true
+          sudo apt-get update && sudo apt-get install -y upx || echo "UPX installation failed, skipping compression"
+          upx --best ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} || echo "UPX compression failed, proceeding"
 
+      # 上传 artifact
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -107,11 +121,16 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    # 仅在推送标签时运行
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') # 仅标签触发
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      # 调试：打印环境变量
+      - name: Print environment
+        run: |
+          echo "GitHub Ref: $GITHUB_REF"
+          echo "Tag Name: ${{ github.ref_name }}"
 
       - name: Download artifacts
         uses: actions/download-artifact@v4

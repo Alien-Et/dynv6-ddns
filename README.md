@@ -1,5 +1,3 @@
-### README.md
-
 ```markdown
 # Dynv6 IP Updater
 

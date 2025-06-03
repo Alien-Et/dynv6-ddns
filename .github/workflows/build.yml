@@ -65,7 +65,8 @@ jobs:
               goos: android
               goarch: arm
               ext: ""
-              ndk_target: arm-linux-androideabi
+              ndk_target: armv7a-linux-androideabi
+              api_level: 21
           # Android ARM 64-bit
           - os: ubuntu-latest
             target:
@@ -74,6 +75,7 @@ jobs:
               goarch: arm64
               ext: ""
               ndk_target: aarch64-linux-android
+              api_level: 21
 
     steps:
       # 检出代码
@@ -86,9 +88,11 @@ jobs:
         with:
           go-version: '>=1.21'  # 支持最新补丁版本
 
-      # 运行测试
-      - name: 运行测试
-        run: go test ./...
+      # 为 Windows 安装 MinGW
+      - name: 为 Windows 安装 MinGW
+        if: contains(matrix.target.goos, 'windows')
+        run: choco install mingw
+        shell: powershell
 
       # 为 Android 构建安装 NDK
       - name: 设置 Android NDK
@@ -98,27 +102,23 @@ jobs:
           ndk-version: r26d
         id: setup-ndk
 
-      # 在 Windows 上安装 7z
-      - name: 在 Windows 上安装 7z
-        if: contains(matrix.target.goos, 'windows')
-        run: choco install 7zip
-        shell: powershell
+      # 运行测试
+      - name: 运行测试
+        env:
+          CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
+          CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'gcc' || '' }}
+        run: go test ./...
 
       # 构建二进制文件
       - name: 构建二进制文件
         env:
           GOOS: ${{ matrix.target.goos }}
           GOARCH: ${{ matrix.target.goarch }}
-          CGO_ENABLED: 0
+          CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
+          CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'gcc' || '' }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          if [ "${{ matrix.target.goos }}" = "android" ]; then
-            export CC="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.target.ndk_target }}-clang"
-            export CGO_ENABLED=1  # Android 需要 CGO
-            go build -o dynv6${{ matrix.target.ext }} -ldflags "-s -w" .
-          else
-            go build -o dynv6${{ matrix.target.ext }} -ldflags "-s -w" .
-          fi
+          go build -o dynv6${{ matrix.target.ext }} -ldflags "-s -w" .
 
       # 打包二进制文件和静态文件
       - name: 打包二进制文件
@@ -126,7 +126,7 @@ jobs:
           BINARY_NAME="dynv6-${{ matrix.target.name }}${{ matrix.target.ext }}"
           mv dynv6${{ matrix.target.ext }} $BINARY_NAME
           if [ "${{ matrix.target.goos }}" = "windows" ]; then
-            7z a $BINARY_NAME.zip $BINARY_NAME static/
+            powershell -Command "Compress-Archive -Path $BINARY_NAME,static -DestinationPath $BINARY_NAME.zip"
             echo "ASSET=$BINARY_NAME.zip" | tee -a $GITHUB_ENV
           else
             tar -czf $BINARY_NAME.tar.gz $BINARY_NAME static/

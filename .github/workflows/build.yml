@@ -31,7 +31,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
-          go install golang.org/x/tools/cmd/go@latest
 
       # 编译所有平台的二进制文件
       - name: 交叉编译

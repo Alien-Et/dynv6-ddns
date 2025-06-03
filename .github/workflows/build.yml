@@ -65,7 +65,7 @@ jobs:
               goos: android
               goarch: arm
               ext: ""
-              cross_target: arm-linux-androideabi
+              ndk_target: arm-linux-androideabi
           # Android ARM 64-bit
           - os: ubuntu-latest
             target:
@@ -73,7 +73,7 @@ jobs:
               goos: android
               goarch: arm64
               ext: ""
-              cross_target: aarch64-linux-android
+              ndk_target: aarch64-linux-android
 
     steps:
       # 检出代码
@@ -84,19 +84,11 @@ jobs:
       - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '>=1.21'  # 使用 >=1.21 以支持最新补丁版本
+          go-version: '>=1.21'  # 支持最新补丁版本
 
       # 运行测试
       - name: 运行测试
         run: go test ./...
-
-      # 为 Android 构建设置 Rust
-      - name: 设置 Rust 环境
-        if: contains(matrix.target.goos, 'android')
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          default: true
 
       # 为 Android 构建安装 NDK
       - name: 设置 Android NDK
@@ -105,12 +97,6 @@ jobs:
         with:
           ndk-version: r26d
         id: setup-ndk
-
-      # 安装 cross 工具用于 Android 构建
-      - name: 安装 Cross 工具
-        if: contains(matrix.target.goos, 'android')
-        run: |
-          cargo install cross --locked
 
       # 在 Windows 上安装 7z
       - name: 在 Windows 上安装 7z
@@ -127,7 +113,9 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           if [ "${{ matrix.target.goos }}" = "android" ]; then
-            cross build --release --target ${{ matrix.target.cross_target }}
+            export CC="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.target.ndk_target }}-clang"
+            export CGO_ENABLED=1  # Android 需要 CGO
+            go build -o dynv6${{ matrix.target.ext }} -ldflags "-s -w" .
           else
             go build -o dynv6${{ matrix.target.ext }} -ldflags "-s -w" .
           fi
@@ -139,10 +127,10 @@ jobs:
           mv dynv6${{ matrix.target.ext }} $BINARY_NAME
           if [ "${{ matrix.target.goos }}" = "windows" ]; then
             7z a $BINARY_NAME.zip $BINARY_NAME static/
-            echo "ASSET=$BINARY_NAME.zip" >> $GITHUB_ENV
+            echo "ASSET=$BINARY_NAME.zip" | tee -a $GITHUB_ENV
           else
             tar -czf $BINARY_NAME.tar.gz $BINARY_NAME static/
-            echo "ASSET=$BINARY_NAME.tar.gz" >> $GITHUB_ENV
+            echo "ASSET=$BINARY_NAME.tar.gz" | tee -a $GITHUB_ENV
           fi
 
       # 上传构建产物

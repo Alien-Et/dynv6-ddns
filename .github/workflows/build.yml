@@ -1,204 +1,130 @@
-name: Build Cross-Platform Binaries
+name: 交叉编译和发布
 
-# 触发条件：推送到 main 分支、创建 v* 标签或提交拉取请求
 on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
   pull_request:
+    branches:
+      - main
 
 jobs:
   build:
-    name: 构建 ${{ matrix.target.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          # Linux 64-bit
-          - os: ubuntu-latest
-            target:
-              name: linux-amd64
-              goos: linux
-              goarch: amd64
-              ext: ""
-          # Linux 32-bit
-          - os: ubuntu-latest
-            target:
-              name: linux-i386
-              goos: linux
-              goarch: 386
-              ext: ""
-          # Windows 64-bit
-          - os: windows-2022
-            target:
-              name: windows-amd64
-              goos: windows
-              goarch: amd64
-              ext: ".exe"
-          # Windows 32-bit
-          - os: windows-2022
-            target:
-              name: windows-i386
-              goos: windows
-              goarch: 386
-              ext: ".exe"
-          # macOS 64-bit
-          - os: macos-latest
-            target:
-              name: macos-amd64
-              goos: darwin
-              goarch: amd64
-              ext: ""
-          # macOS ARM64 (M1/M2)
-          - os: macos-latest
-            target:
-              name: macos-arm64
-              goos: darwin
-              goarch: arm64
-              ext: ""
-          # Android ARM 32-bit
-          - os: ubuntu-latest
-            target:
-              name: android-arm
-              goos: android
-              goarch: arm
-              ext: ""
-              ndk_target: armv7a-linux-androideabi
-              api_level: 21
-          # Android ARM 64-bit
-          - os: ubuntu-latest
-            target:
-              name: android-arm64
-              goos: android
-              goarch: arm64
-              ext: ""
-              ndk_target: aarch64-linux-android
-              api_level: 21
+    name: 编译和打包
+    runs-on: ubuntu-latest
 
     steps:
       # 检出代码
       - name: 检出代码
         uses: actions/checkout@v4
-
-      # 缓存 Go 模块
-      - name: 缓存 Go 模块
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.mod', '**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
 
       # 设置 Go 环境
-      - name: 设置 Go 环境
+      - name: 设置 Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'  # 与 go.mod 匹配
-        continue-on-error: true  # 允许下载失败继续
-
-      # 调试 Go 环境
-      - name: 调试 Go 环境
-        run: |
-          go env
-          go version
-          which go
-
-      # 为 Windows 安装 MinGW
-      - name: 为 Windows 安装 MinGW
-        if: contains(matrix.target.goos, 'windows')
-        run: |
-          choco install mingw --force
-          x86_64-w64-mingw32-gcc --version
-        shell: powershell
-
-      # 为 Android 构建安装 NDK
-      - name: 设置 Android NDK
-        if: contains(matrix.target.goos, 'android')
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r26d
-        id: setup-ndk
-
-      # 调试 NDK 工具链路径
-      - name: 调试 NDK 工具链路径
-        if: contains(matrix.target.goos, 'android')
-        run: |
-          echo "NDK Path: ${{ steps.setup-ndk.outputs.ndk-path }}"
-          ls -R ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin
-          echo "Checking Clang: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.target.ndk_target }}${{ matrix.target.api_level }}-clang"
-          ls ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.target.ndk_target }}${{ matrix.target.api_level }}-clang || echo "Clang not found"
-
-      # 运行测试
-      - name: 运行测试
+          go-version: '1.24.2' # 与 go.mod 中指定的版本一致
         env:
-          CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
-          CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-gcc' || '' }}
-          CXX: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang++', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-g++' || '' }}
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: go test ./... -v
-        continue-on-error: true  # 允许测试失败
+          GO111MODULE: on
 
-      # 构建二进制文件
-      - name: 构建二进制文件
+      # 安装交叉编译工具链
+      - name: 安装交叉编译工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+          go install golang.org/x/tools/cmd/go@latest
+
+      # 编译所有平台的二进制文件
+      - name: 交叉编译
         env:
-          GOOS: ${{ matrix.target.goos }}
-          GOARCH: ${{ matrix.target.goarch }}
-          CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
-          CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-gcc' || '' }}
-          CXX: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang++', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-g++' || '' }}
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CGO_ENABLED: 1 # 启用 CGO，因为 go-sqlite3 需要
         run: |
-          echo "CGO_ENABLED=$CGO_ENABLED"
-          echo "CC=$CC"
-          echo "CXX=$CXX"
-          go build -o dynv6${{ matrix.target.ext }} -ldflags "-s -w" .
+          # 定义输出目录
+          mkdir -p build
 
-      # 打包二进制文件和静态文件
-      - name: 打包二进制文件
+          # Linux AMD64
+          echo "正在编译 Linux AMD64..."
+          GOOS=linux GOARCH=amd64 go build -o build/dynv6-linux-amd64
+
+          # Linux ARM64
+          echo "正在编译 Linux ARM64..."
+          GOOS=linux GOARCH=arm64 CC=aarch64-linux-gnu-gcc go build -o build/dynv6-linux-arm64
+
+          # Linux ARM (32-bit)
+          echo "正在编译 Linux ARM..."
+          GOOS=linux GOARCH=arm CC=arm-linux-gnueabihf-gcc go build -o build/dynv6-linux-arm
+
+          # Windows AMD64
+          echo "正在编译 Windows AMD64..."
+          GOOS=windows GOARCH=amd64 go build -o build/dynv6-windows-amd64.exe
+
+          # Windows ARM64
+          echo "正在编译 Windows ARM64..."
+          GOOS=windows GOARCH=arm64 go build -o build/dynv6-windows-arm64.exe
+
+          # macOS AMD64
+          echo "正在编译 macOS AMD64..."
+          GOOS=darwin GOARCH=amd64 go build -o build/dynv6-darwin-amd64
+
+          # macOS ARM64
+          echo "正在编译 macOS ARM64..."
+          GOOS=darwin GOARCH=arm64 go build -o build/dynv6-darwin-arm64
+
+          # Android ARM64
+          echo "正在编译 Android ARM64..."
+          GOOS=android GOARCH=arm64 CC=aarch64-linux-gnu-gcc go build -o build/dynv6-android-arm64
+
+          # Android ARM (32-bit)
+          echo "正在编译 Android ARM..."
+          GOOS=android GOARCH=arm CC=arm-linux-gnueabihf-gcc go build -o build/dynv6-android-arm
+
+      # 打包静态文件
+      - name: 打包静态文件
         run: |
-          BINARY_NAME="dynv6-${{ matrix.target.name }}${{ matrix.target.ext }}"
-          mv dynv6${{ matrix.target.ext }} $BINARY_NAME
-          if [ "${{ matrix.target.goos }}" = "windows" ]; then
-            powershell -Command "Compress-Archive -Path $BINARY_NAME,static -DestinationPath $BINARY_NAME.zip -Force"
-            echo "ASSET=$BINARY_NAME.zip" | tee -a $GITHUB_ENV
-          else
-            tar -czf $BINARY_NAME.tar.gz $BINARY_NAME static/
-            echo "ASSET=$BINARY_NAME.tar.gz" | tee -a $GITHUB_ENV
-          fi
+          mkdir -p build/static
+          cp -r static/* build/static/
 
-      # 上传构建产物
-      - name: 上传构建产物
+      # 创建发布包
+      - name: 创建发布包
+        run: |
+          cd build
+          # 为每个平台创建压缩包
+          tar -czf dynv6-linux-amd64.tar.gz dynv6-linux-amd64 static
+          tar -czf dynv6-linux-arm64.tar.gz dynv6-linux-arm64 static
+          tar -czf dynv6-linux-arm.tar.gz dynv6-linux-arm static
+          zip -r dynv6-windows-amd64.zip dynv6-windows-amd64.exe static
+          zip -r dynv6-windows-arm64.zip dynv6-windows-arm64.exe static
+          tar -czf dynv6-darwin-amd64.tar.gz dynv6-darwin-amd64 static
+          tar -czf dynv6-darwin-arm64.tar.gz dynv6-darwin-arm64 static
+          tar -czf dynv6-android-arm64.tar.gz dynv6-android-arm64 static
+          tar -czf dynv6-android-arm.tar.gz dynv6-android-arm static
+
+      # 上传编译产物
+      - name: 上传编译产物
         uses: actions/upload-artifact@v4
         with:
-          name: dynv6-${{ matrix.target.name }}
-          path: ${{ env.ASSET }}
+          name: dynv6-binaries
+          path: build/*.tar.gz
+          retention-days: 5
 
-  release:
-    name: 创建发布
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      # 检出代码
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      # 下载所有构建产物
-      - name: 下载构建产物
-        uses: actions/download-artifact@v4
+      # 上传 Windows ZIP 文件
+      - name: 上传 Windows ZIP 文件
+        uses: actions/upload-artifact@v4
         with:
-          path: artifacts
+          name: dynv6-windows-binaries
+          path: build/*.zip
+          retention-days: 5
 
-      # 创建 GitHub Release 并上传产物
+      # 在发布时创建 GitHub Release
       - name: 创建 GitHub Release
-        uses: softprops/action-gh-release@v1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/dynv6-*/dynv6-*.tar.gz
-            artifacts/dynv6-*/dynv6-*.zip
+            build/*.tar.gz
+            build/*.zip
+          tag_name: v${{ github.run_number }}
+          name: Release v${{ github.run_number }}
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

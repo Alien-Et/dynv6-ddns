@@ -1,4 +1,4 @@
-name: dynv6 and Release
+name: CI and Release
 
 on:
   push:
@@ -72,11 +72,10 @@ jobs:
 
       # 安装交叉编译工具（针对 arm/arm64）
       - name: Install cross-compilation tools
-        if: matrix.goarch == 'arm' || matrix.goarch == 'arm64'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && (matrix.goarch == 'arm' || matrix.goarch == 'arm64')
 
       # 运行代码格式化检查
       - name: Run gofmt
@@ -150,9 +149,9 @@ jobs:
       - name: Set up Android NDK
         run: |
           sudo apt-get update
-          sudo apt-get install -y openjdk-11-jdk
-          wget https://dl.google.com/android/repository/android-ndk-r23b-linux-x86_64.zip
-          unzip android-ndk-r23b-linux-x86_64.zip
+          sudo apt-get install -y openjdk-11-jdk unzip
+          wget https://dl.google.com/android/repository/android-ndk-r23b-linux.zip
+          unzip android-ndk-r23b-linux.zip
           echo "ANDROID_NDK_HOME=$(pwd)/android-ndk-r23b" >> $GITHUB_ENV
 
       # 安装依赖
@@ -165,21 +164,10 @@ jobs:
           GOOS=android \
           GOARCH=${{ matrix.goarch }} \
           CGO_ENABLED=1 \
-          CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang \
-          CXX=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang++ \
+          CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang' || 'aarch64-linux-android21-clang' }} \
+          CXX=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang++' || 'aarch64-linux-android21-clang++' }} \
           go build -o dynv6-ddns-android-${{ matrix.goarch }} \
           -ldflags "-X main.version=${{ github.ref_name }}"
-        if: matrix.goarch == 'arm'
-      - name: Build Android binary (arm64)
-        run: |
-          GOOS=android \
-          GOARCH=${{ matrix.goarch }} \
-          CGO_ENABLED=1 \
-          CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang \
-          CXX=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++ \
-          go build -o dynv6-ddns-android-${{ matrix.goarch }} \
-          -ldflags "-X main.version=${{ github.ref_name }}"
-        if: matrix.goarch == 'arm64'
 
       # 上传 Android 构建产物
       - name: Upload Android artifacts

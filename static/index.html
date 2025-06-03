@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>dynv6 配置</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+        }
+        #status {
+            transition: opacity 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+    <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-2xl">
+        <h1 class="text-2xl font-bold mb-6 text-center text-gray-800">dynv6 IP 更新配置</h1>
+        <form id="configForm" class="space-y-4">
+            <!-- Domains -->
+            <div>
+                <label for="domains" class="block text-sm font-medium text-gray-700">域名（多个域名用逗号分隔，例如 example.dns.navy,test.dns.navy）</label>
+                <input type="text" id="domains" name="domains" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="example.dns.navy,test.dns.navy" required>
+            </div>
+
+            <!-- Token -->
+            <div>
+                <label for="token" class="block text-sm font-medium text-gray-700">dynv6 API 令牌（从 dynv6.com 获取）</label>
+                <input type="text" id="token" name="token" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="your_token_here" required>
+            </div>
+
+            <!-- Update Interval -->
+            <div>
+                <label for="updateInterval" class="block text-sm font-medium text-gray-700">更新间隔（秒，建议 300）</label>
+                <input type="number" id="updateInterval" name="updateInterval" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="300" min="1" value="300" required>
+            </div>
+
+            <!-- Network Interface -->
+            <div>
+                <label for="networkInterface" class="block text-sm font-medium text-gray-700">网络接口（例如 wlan0, rmnet0）</label>
+                <input type="text" id="networkInterface" name="networkInterface" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="wlan0" value="wlan0" required>
+            </div>
+
+            <!-- IP Type -->
+            <div>
+                <label for="ipType" class="block text-sm font-medium text-gray-700">IP 类型</label>
+                <select id="ipType" name="ipType" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                    <option value="ipv4">IPv4</option>
+                    <option value="ipv6" selected>IPv6</option>
+                    <option value="dual">双栈 (IPv4 + IPv6)</option>
+                </select>
+            </div>
+
+            <!-- Telegram Bot Token -->
+            <div>
+                <label for="telegramBotToken" class="block text-sm font-medium text-gray-700">Telegram 机器人令牌（可选，留空禁用通知）</label>
+                <input type="text" id="telegramBotToken" name="telegramBotToken" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="留空禁用">
+            </div>
+
+            <!-- Telegram Chat ID -->
+            <div>
+                <label for="telegramChatID" class="block text-sm font-medium text-gray-700">Telegram 聊天 ID（可选，留空禁用通知）</label>
+                <input type="text" id="telegramChatID" name="telegramChatID" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" placeholder="留空禁用">
+            </div>
+
+            <!-- Submit Button -->
+            <div class="text-center">
+                <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">保存配置</button>
+            </div>
+        </form>
+
+        <!-- Status Message -->
+        <div id="status" class="mt-4 text-center text-sm text-gray-600"></div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

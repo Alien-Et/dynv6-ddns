@@ -59,22 +59,28 @@ jobs:
       # 安装 Windows CGO 依赖（MinGW）
       - name: Install MinGW for Windows
         if: matrix.os == 'windows-latest'
-        run: choco install mingw -y
+        run: |
+          choco install mingw -y --force
+          echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         env:
           ChocolateyInstall: C:\ProgramData\chocolatey
 
       # 安装 Linux 交叉编译工具（针对 arm/arm64）
       - name: Install cross-compilation tools for Linux
-        if: matrix.os == 'ubuntu-latest' && (matrix.goarch == 'arm' || matrix.goarch == 'arm64')
+        if: matrix.os == 'Ubuntu-latest' && (matrix.goarch == 'arm' || matrix.goarch == 'arm64')
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
-      # 安装 macOS CGO 依赖
-      - name: Install macOS dependencies
+      # 检查并安装 macOS 依赖（SQLite）
+      - name: Check and install SQLite on macOS
         if: matrix.os == 'macos-latest'
         run: |
-          brew install sqlite
+          if ! brew list sqlite >/dev/null 2>&1; then
+            brew install sqlite
+          else
+            echo "SQLite is already installed on macOS."
+          fi
 
       # 缓存 Go 模块
       - name: Cache Go modules
@@ -83,9 +89,9 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-v2-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-
+            ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-v2-
 
       # 安装依赖
       - name: Install dependencies
@@ -103,7 +109,7 @@ jobs:
 
       # 运行静态检查
       - name: Run staticcheck
-        if: matrix.os == 'ubuntu-latest' && matrix.goarch == 'amd64'
+        if: matrix.os == 'Ubuntu-latest' && matrix.goarch == 'amd64'
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
           staticcheck ./...
@@ -114,15 +120,26 @@ jobs:
         env:
           GOARCH: ${{ matrix.goarch }}
           GOOS: ${{ matrix.goos }}
-          CGO_ENABLED: ${{ matrix.goos == 'windows' && '1' || '0' }}
+          CGO_ENABLED: 1 # 统一启用 CGO，因为 go-sqlite3 需要
+
+      # 调试环境（失败时）
+      - name: Debug environment on failure
+        if: failure()
+        run: |
+          go env
+          ls -la
+          echo "PATH: $PATH"
+          which gcc
+          gcc --version || echo "gcc not found"
+          go version
 
       # 编译二进制文件
       - name: Build binary
         run: |
           GOOS=${{ matrix.goos }} \
           GOARCH=${{ matrix.goarch }} \
-          CGO_ENABLED=${{ matrix.goos == 'windows' && '1' || '0' }} \
-          go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
+          CGO_ENABLED=1 \
+          go build -v -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
           -ldflags "-X main.version=${{ github.ref_name }}"
         env:
           CC: ${{ matrix.goarch == 'arm' && 'arm-linux-gnueabihf-gcc' || matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
@@ -159,9 +176,9 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-go-android-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-android-${{ matrix.goarch }}-v2-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-android-${{ matrix.goarch }}-
+            ${{ runner.os }}-go-android-${{ matrix.goarch }}-v2-
 
       # 安装 Android NDK 和依赖
       - name: Set up Android NDK
@@ -184,8 +201,18 @@ jobs:
           CGO_ENABLED=1 \
           CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang' || 'aarch64-linux-android21-clang' }} \
           CXX=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang++' || 'aarch64-linux-android21-clang++' }} \
-          go build -o dynv6-ddns-android-${{ matrix.goarch }} \
+          go build -v -o dynv6-ddns-android-${{ matrix.goarch }} \
           -ldflags "-X main.version=${{ github.ref_name }}"
+
+      # 调试环境（失败时）
+      - name: Debug environment on failure
+        if: failure()
+        run: |
+          go env
+          ls -la
+          echo "PATH: $PATH"
+          which clang
+          $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang' || 'aarch64-linux-android21-clang' }} --version || echo "clang not found"
 
       # 上传 Android 构建产物
       - name: Upload Android artifacts

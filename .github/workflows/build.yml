@@ -1,5 +1,6 @@
 name: Build Cross-Platform Binaries
 
+# 触发条件：推送到 main 分支、创建 v* 标签或提交拉取请求
 on:
   push:
     branches:
@@ -30,7 +31,7 @@ jobs:
               goarch: 386
               ext: ""
           # Windows 64-bit
-          - os: windows-2022  # 使用 windows-2022 提高稳定性
+          - os: windows-2022
             target:
               name: windows-amd64
               goos: windows
@@ -92,17 +93,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      # 设置 Go 环境（修复后：指定官方源 + 国内代理）
+      # 设置 Go 环境
       - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'
-          distribution: 'official'  # 使用官方发行版
-        env:
-          GOPROXY: https://goproxy.cn,direct  # 国内镜像加速
+          go-version: '1.24.2'  # 与 go.mod 匹配
         continue-on-error: true  # 允许下载失败继续
 
-      # 为 Windows 安装 MinGW（调整顺序到设置Go之后）
+      # 为 Windows 安装 MinGW
       - name: 为 Windows 安装 MinGW
         if: contains(matrix.target.goos, 'windows')
         run: choco install mingw --force
@@ -116,28 +114,32 @@ jobs:
           ndk-version: r26d
         id: setup-ndk
 
-      # 调试 NDK 工具链路径（可选，保留用于排查）
+      # 调试 NDK 工具链路径
       - name: 调试 NDK 工具链路径
         if: contains(matrix.target.goos, 'android')
         run: |
           echo "NDK Path: ${{ steps.setup-ndk.outputs.ndk-path }}"
           ls -R ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin
+          echo "Checking Clang: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.target.ndk_target }}${{ matrix.target.api_level }}-clang"
+          ls ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.target.ndk_target }}${{ matrix.target.api_level }}-clang || echo "Clang not found"
 
-      # 运行测试（显式控制CGO）
+      # 运行测试
       - name: 运行测试
         env:
           CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
           CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-gcc' || '' }}
+          CXX: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang++', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-g++' || '' }}
         run: go test ./... -v
         continue-on-error: true  # 允许测试失败
 
-      # 构建二进制文件（强制启用CGO for Android/Windows）
+      # 构建二进制文件
       - name: 构建二进制文件
         env:
           GOOS: ${{ matrix.target.goos }}
           GOARCH: ${{ matrix.target.goarch }}
-          CGO_ENABLED: "1"  # 强制启用CGO（关键修复点）
+          CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
           CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-gcc' || '' }}
+          CXX: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang++', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-g++' || '' }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           go build -o dynv6${{ matrix.target.ext }} -ldflags "-s -w" .

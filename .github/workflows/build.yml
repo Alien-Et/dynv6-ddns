@@ -1,160 +1,229 @@
-name: Release Build
+name: dynv6 and Release
 
 on:
-  # 自动触发条件（推送版本标签时）
   push:
+    branches:
+      - main
     tags:
-      - 'v*'
-  
-  # 手动触发条件（通过GitHub UI）
-  workflow_dispatch:
-    inputs:
-      target-platforms:
-        description: "选择构建平台（留空则构建全部）"
-        required: false
-        default: "all"
-        type: choice
-        options:
-          - "all"
-          - "windows"
-          - "linux"
-          - "macos"
-          - "android"
+      - "v*.*.*" # 触发 Release 的 tag 格式，例如 v1.0.0
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
-    name: Build
+    name: Build and Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        goos: [linux, windows, darwin]
+        goarch: [arm, arm64, 386, amd64]
+        exclude:
+          # Windows 不支持 arm/arm64
+          - os: windows-latest
+            goarch: arm
+          - os: windows-latest
+            goarch: arm64
+          # macOS 不支持 arm/386
+          - os: macos-latest
+            goarch: arm
+          - os: macos-latest
+            goarch: 386
+          # 确保 GOOS 和 runner OS 匹配
+          - os: ubuntu-latest
+            goos: windows
+          - os: ubuntu-latest
+            goos: darwin
+          - os: windows-latest
+            goos: linux
+          - os: windows-latest
+            goos: darwin
+          - os: macos-latest
+            goos: linux
+          - os: macos-latest
+            goos: windows
+      fail-fast: false
+
+    steps:
+      # 检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 设置 Go 环境
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21' # 根据你的项目调整 Go 版本
+
+      # 缓存 Go 模块
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      # 安装依赖
+      - name: Install dependencies
+        run: go mod tidy
+
+      # 安装交叉编译工具（针对 arm/arm64）
+      - name: Install cross-compilation tools
+        if: matrix.goarch == 'arm' || matrix.goarch == 'arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+        if: matrix.os == 'ubuntu-latest'
+
+      # 运行代码格式化检查
+      - name: Run gofmt
+        run: |
+          if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
+            echo "Code is not formatted with gofmt. Run 'gofmt -w .' to fix."
+            gofmt -l .
+            exit 1
+          fi
+        if: matrix.os == 'ubuntu-latest' && matrix.goarch == 'amd64'
+
+      # 运行静态检查
+      - name: Run staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+        if: matrix.os == 'ubuntu-latest' && matrix.goarch == 'amd64'
+
+      # 运行测试（如果有测试用例）
+      - name: Run tests
+        run: go test -v ./...
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: ${{ matrix.goos }}
+
+      # 编译二进制文件
+      - name: Build binary
+        run: |
+          GOOS=${{ matrix.goos }} \
+          GOARCH=${{ matrix.goarch }} \
+          go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
+          -ldflags "-X main.version=${{ github.ref_name }}"
+        env:
+          CGO_ENABLED: 0 # 禁用 CGO 以生成静态二进制文件
+
+      # 上传构建产物
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}*
+
+  build-android:
+    name: Build for Android
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        platform: 
-          - { os: windows, arch: 386, ext: .exe, target: windows-32, group: "windows" }
-          - { os: windows, arch: amd64, ext: .exe, target: windows-64, group: "windows" }
-          - { os: linux, arch: 386, ext: , target: linux-32, group: "linux" }
-          - { os: linux, arch: amd64, ext: , target: linux-64, group: "linux" }
-          - { os: linux, arch: arm, ext: , target: linux-arm, group: "linux" }
-          - { os: linux, arch: arm64, ext: , target: linux-arm64, group: "linux" }
-          - { os: darwin, arch: amd64, ext: , target: macos-intel, group: "macos" }
-          - { os: darwin, arch: arm64, ext: , target: macos-arm64, group: "macos" }
-          - { os: android, arch: arm, ext: , target: android-arm, group: "android" }
-          - { os: android, arch: arm64, ext: , target: android-arm64, group: "android" }
-      
-      # 根据手动触发输入过滤平台
-      include: ${{ fromJson(needs.setup.outputs.selected-platforms) }}
-
+        goarch: [arm, arm64]
     steps:
+      # 检出代码
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # 设置 Go 环境
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
+      # 缓存 Go 模块
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      # 安装 Android NDK
       - name: Set up Android NDK
-        if: matrix.platform.group == 'android'
-        uses: android-actions/setup-android-ndk@v1
-        with:
-          ndk-version: '25.1.8937393'
-
-      - name: Build binary
-        env:
-          GOOS: ${{ matrix.platform.os }}
-          GOARCH: ${{ matrix.platform.arch }}
-          CGO_ENABLED: ${{ matrix.platform.group == 'android' && '0' || '1' }}
-          # Android 专用环境变量
-          CC: ${{ matrix.platform.group == 'android' && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}21-clang', env.ANDROID_NDK_HOME, matrix.platform.arch == 'arm' && 'armv7a-linux-androideabi' || 'aarch64-linux-android') || '' }}
-          CXX: ${{ matrix.platform.group == 'android' && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}21-clang++', env.ANDROID_NDK_HOME, matrix.platform.arch == 'arm' && 'armv7a-linux-androideabi' || 'aarch64-linux-android') || '' }}
         run: |
-          # 创建平台专用目录
-          mkdir -p release/${{ matrix.platform.target }}
-          
-          # 构建二进制文件
-          output_name="dynv6-ddns${{ matrix.platform.ext }}"
-          go build -ldflags="-s -w" -o $output_name .
-          
-          # 复制静态资源
-          cp -r static release/${{ matrix.platform.target }}/
-          
-          # 移动二进制文件
-          mv $output_name release/${{ matrix.platform.target }}/
-          
-          # 创建压缩包（包含版本信息）
-          cd release
-          tar -czf ${{ matrix.platform.target }}-${{ github.ref_name || 'dev' }}.tar.gz ${{ matrix.platform.target }}
-          rm -rf ${{ matrix.platform.target }}
+          sudo apt-get update
+          sudo apt-get install -y openjdk-11-jdk
+          wget https://dl.google.com/android/repository/android-ndk-r23b-linux-x86_64.zip
+          unzip android-ndk-r23b-linux-x86_64.zip
+          echo "ANDROID_NDK_HOME=$(pwd)/android-ndk-r23b" >> $GITHUB_ENV
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: dynv6-ddns-${{ matrix.platform.target }}
-          path: release/${{ matrix.platform.target }}-*.tar.gz
+      # 安装依赖
+      - name: Install dependencies
+        run: go mod tidy
 
-  # 前置工作（用于手动触发时过滤平台）
-  setup:
-    name: Setup
-    runs-on: ubuntu-latest
-    outputs:
-      selected-platforms: ${{ steps.filter-platforms.outputs.selected-platforms }}
-    steps:
-      - name: Filter platforms
-        id: filter-platforms
+      # 编译 Android 二进制
+      - name: Build Android binary
         run: |
-          # 自动触发时使用全部平台
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            echo '::set-output name=selected-platforms::[]'
-            exit 0
-          fi
-          
-          # 手动触发时根据选择过滤
-          case "${{ inputs.target-platforms }}" in
-            "windows")
-              echo '::set-output name=selected-platforms::[{"os":"windows","arch":"386","ext":".exe","target":"windows-32","group":"windows"},{"os":"windows","arch":"amd64","ext":".exe","target":"windows-64","group":"windows"}]'
-              ;;
-            "linux")
-              echo '::set-output name=selected-platforms::[{"os":"linux","arch":"386","ext":"","target":"linux-32","group":"linux"},{"os":"linux","arch":"amd64","ext":"","target":"linux-64","group":"linux"},{"os":"linux","arch":"arm","ext":"","target":"linux-arm","group":"linux"},{"os":"linux","arch":"arm64","ext":"","target":"linux-arm64","group":"linux"}]'
-              ;;
-            "macos")
-              echo '::set-output name=selected-platforms::[{"os":"darwin","arch":"amd64","ext":"","target":"macos-intel","group":"macos"},{"os":"darwin","arch":"arm64","ext":"","target":"macos-arm64","group":"macos"}]'
-              ;;
-            "android")
-              echo '::set-output name=selected-platforms::[{"os":"android","arch":"arm","ext":"","target":"android-arm","group":"android"},{"os":"android","arch":"arm64","ext":"","target":"android-arm64","group":"android"}]'
-              ;;
-            *)
-              echo '::set-output name=selected-platforms::[]'
-              ;;
-          esac
+          GOOS=android \
+          GOARCH=${{ matrix.goarch }} \
+          CGO_ENABLED=1 \
+          CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang \
+          CXX=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang++ \
+          go build -o dynv6-ddns-android-${{ matrix.goarch }} \
+          -ldflags "-X main.version=${{ github.ref_name }}"
+        if: matrix.goarch == 'arm'
+      - name: Build Android binary (arm64)
+        run: |
+          GOOS=android \
+          GOARCH=${{ matrix.goarch }} \
+          CGO_ENABLED=1 \
+          CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang \
+          CXX=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++ \
+          go build -o dynv6-ddns-android-${{ matrix.goarch }} \
+          -ldflags "-X main.version=${{ github.ref_name }}"
+        if: matrix.goarch == 'arm64'
+
+      # 上传 Android 构建产物
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynv6-ddns-android-${{ matrix.goarch }}
+          path: dynv6-ddns-android-${{ matrix.goarch }}
 
   release:
     name: Create Release
-    needs: [build]
-    if: github.event_name == 'push'
+    needs: [build, build-android]
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') # 仅在推送 tag 时运行
     steps:
+      # 检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 下载所有构建产物
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Create release
-        uses: softprops/action-gh-release@v1
+      # 创建 Release 并上传二进制文件
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref }}
-          name: Release ${{ github.ref_name }}
-          body: |
-            🚀 Dynv6 DDNS Updater ${{ github.ref_name }}
-            
-            ### 支持平台
-            | 平台 | 架构 |
-            |------|------|
-            | Windows | 32-bit, 64-bit |
-            | Linux | 32-bit, 64-bit, ARM, ARM64 |
-            | macOS | Intel, Apple Silicon |
-            | Android | ARM, ARM64 |
-            
-            ### 使用说明
-            1. 下载对应平台的压缩包
-            2. 解压后运行 `dynv6-ddns` (Windows 为 `dynv6-ddns.exe`)
-            3. 访问 `http://localhost:8080` 进行配置
           files: |
-            artifacts/**/*.tar.gz
+            artifacts/dynv6-ddns-linux-amd64/dynv6-ddns-linux-amd64
+            artifacts/dynv6-ddns-linux-arm/dynv6-ddns-linux-arm
+            artifacts/dynv6-ddns-linux-arm64/dynv6-ddns-linux-arm64
+            artifacts/dynv6-ddns-linux-386/dynv6-ddns-linux-386
+            artifacts/dynv6-ddns-windows-amd64/dynv6-ddns-windows-amd64.exe
+            artifacts/dynv6-ddns-windows-386/dynv6-ddns-windows-386.exe
+            artifacts/dynv6-ddns-darwin-amd64/dynv6-ddns-darwin-amd64
+            artifacts/dynv6-ddns-darwin-arm64/dynv6-ddns-darwin-arm64
+            artifacts/dynv6-ddns-android-arm/dynv6-ddns-android-arm
+            artifacts/dynv6-ddns-android-arm64/dynv6-ddns-android-arm64
+          draft: false
+          prerelease: false
+          body: |
+            Release ${{ github.ref_name }}
+            - Built for Linux (amd64, 386, arm, arm64), Windows (amd64, 386), macOS (amd64, arm64), Android (arm, arm64)
+            - See [README.md](README.md) for installation and usage instructions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

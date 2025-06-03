@@ -1,155 +1,160 @@
-name: Build and Release Dynv6 Updater
+name: Build Cross-Platform Binaries
 
-# 触发工作流的事件
+# 触发条件：推送到 main 分支或创建标签
 on:
   push:
     branches:
       - main
     tags:
-      - 'v*.*.*' # 触发 Release 的标签格式，例如 v1.0.0
+      - "v*"
   pull_request:
-    branches:
-      - main
-
-# 环境变量
-env:
-  GO_VERSION: '1.21' # 指定 Go 版本
-  BINARY_NAME: dynv6 # 二进制文件名
 
 jobs:
   build:
-    name: Build for ${{ matrix.os }}-${{ matrix.arch }}
+    name: Build for ${{ matrix.target.name }}
     runs-on: ${{ matrix.os }}
-
-    # 定义编译矩阵，覆盖多平台和架构
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        arch: [amd64, arm64]
         include:
-          # Android 手机：ARMv7 和 ARM64
+          # Linux 64-bit
           - os: ubuntu-latest
-            arch: arm
-            goos: linux
-            goarch: arm
-            goarm: 7
-            suffix: linux-armv7-android
+            target:
+              name: linux-amd64
+              goos: linux
+              goarch: amd64
+              ext: ""
+          # Linux 32-bit
           - os: ubuntu-latest
-            arch: arm64
-            goos: linux
-            goarch: arm64
-            suffix: linux-arm64-android
-          # 路由器：ARMv7 和 MIPS
-          - os: ubuntu-latest
-            arch: arm
-            goos: linux
-            goarch: arm
-            goarm: 7
-            suffix: linux-armv7-router
-          - os: ubuntu-latest
-            arch: mips
-            goos: linux
-            goarch: mips
-            suffix: linux-mips-router
-          # 其他平台
-          - os: ubuntu-latest
-            arch: amd64
-            goos: linux
-            goarch: amd64
-            suffix: linux-amd64
-          - os: ubuntu-latest
-            arch: arm64
-            goos: linux
-            goarch: arm64
-            suffix: linux-arm64
+            target:
+              name: linux-i386
+              goos: linux
+              goarch: 386
+              ext: ""
+          # Windows 64-bit
           - os: windows-latest
-            arch: amd64
-            goos: windows
-            goarch: amd64
-            suffix: windows-amd64
-            ext: .exe
+            target:
+              name: windows-amd64
+              goos: windows
+              goarch: amd64
+              ext: ".exe"
+          # Windows 32-bit
           - os: windows-latest
-            arch: arm64
-            goos: windows
-            goarch: arm64
-            suffix: windows-arm64
-            ext: .exe
+            target:
+              name: windows-i386
+              goos: windows
+              goarch: 386
+              ext: ".exe"
+          # macOS 64-bit
           - os: macos-latest
-            arch: amd64
-            goos: darwin
-            goarch: amd64
-            suffix: darwin-amd64
+            target:
+              name: macos-amd64
+              goos: darwin
+              goarch: amd64
+              ext: ""
+          # macOS ARM64 (M1/M2)
           - os: macos-latest
-            arch: arm64
-            goos: darwin
-            goarch: arm64
-            suffix: darwin-arm64
+            target:
+              name: macos-arm64
+              goos: darwin
+              goarch: arm64
+              ext: ""
+          # Android ARM 32-bit
+          - os: ubuntu-latest
+            target:
+              name: android-arm
+              goos: android
+              goarch: arm
+              ext: ""
+          # Android ARM 64-bit
+          - os: ubuntu-latest
+            target:
+              name: android-arm64
+              goos: android
+              goarch: arm64
+              ext: ""
 
     steps:
       # 检出代码
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       # 设置 Go 环境
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: '1.21'
 
-      # 缓存 Go 模块
-      - name: Cache Go modules
-        uses: actions/cache@v4
+      # 为 Android 构建安装 NDK
+      - name: Setup Android NDK
+        if: contains(matrix.target.goos, 'android')
+        uses: nttld/setup-ndk@v1
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.mod', '**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          ndk-version: r26d
+        id: setup-ndk
 
-      # 编译二进制文件
-      - name: Build binary
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
-          CGO_ENABLED: 0 # 禁用 CGO 以确保静态链接
+      # 安装 cross 工具用于 Android 构建
+      - name: Install Cross for Android
+        if: contains(matrix.target.goos, 'android')
         run: |
-          go build -o ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} main.go
-          chmod +x ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} || true
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall --no-confirm cross
 
-      # 打包二进制文件为 artifact
-      - name: Upload artifact
+      # 构建二进制文件
+      - name: Build Binary
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+          CGO_ENABLED: 0
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          if [ "${{ matrix.target.goos }}" = "android" ]; then
+            cross build --release --target ${{ matrix.target.goos == 'android' && matrix.target.goarch == 'arm' && 'arm-linux-androideabi' || 'aarch64-linux-android' }}
+          else
+            go build -o dynv6${{ matrix.target.ext }} -ldflags "-s -w" .
+          fi
+
+      # 打包二进制文件
+      - name: Package Binary
+        run: |
+          BINARY_NAME="dynv6-${{ matrix.target.name }}${{ matrix.target.ext }}"
+          mv dynv6${{ matrix.target.ext }} $BINARY_NAME
+          if [ "${{ matrix.target.goos }}" = "windows" ]; then
+            7z a $BINARY_NAME.zip $BINARY_NAME
+            echo "ASSET=$BINARY_NAME.zip" >> $GITHUB_ENV
+          else
+            tar -czf $BINARY_NAME.tar.gz $BINARY_NAME
+            echo "ASSET=$BINARY_NAME.tar.gz" >> $GITHUB_ENV
+          fi
+
+      # 上传构建产物
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BINARY_NAME }}-${{ matrix.suffix }}
-          path: ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }}
-          retention-days: 7
+          name: dynv6-${{ matrix.target.name }}
+          path: ${{ env.ASSET }}
 
-  # 创建 GitHub Release（仅在推送标签时触发）
   release:
-    name: Create GitHub Release
+    name: Create Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v') # 仅在推送标签时运行
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       # 检出代码
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 下载所有编译好的 artifacts
-      - name: Download artifacts
+      # 下载所有构建产物
+      - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      # 创建 Release 并上传 artifacts
+      # 创建 GitHub Release 并上传产物
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/*/*
-          draft: false
-          prerelease: false
+            artifacts/dynv6-*/dynv6-*.tar.gz
+            artifacts/dynv6-*/dynv6-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

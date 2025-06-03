@@ -1,9 +1,25 @@
 name: Release Build
 
 on:
+  # 自动触发条件（推送版本标签时）
   push:
     tags:
-      - 'v*' # 触发版本标签 (如 v1.0.0)
+      - 'v*'
+  
+  # 手动触发条件（通过GitHub UI）
+  workflow_dispatch:
+    inputs:
+      target-platforms:
+        description: "选择构建平台（留空则构建全部）"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - "all"
+          - "windows"
+          - "linux"
+          - "macos"
+          - "android"
 
 jobs:
   build:
@@ -12,16 +28,19 @@ jobs:
     strategy:
       matrix:
         platform: 
-          - { os: windows, arch: 386, ext: .exe, target: windows-32 }
-          - { os: windows, arch: amd64, ext: .exe, target: windows-64 }
-          - { os: linux, arch: 386, ext: , target: linux-32 }
-          - { os: linux, arch: amd64, ext: , target: linux-64 }
-          - { os: linux, arch: arm, ext: , target: linux-arm }
-          - { os: linux, arch: arm64, ext: , target: linux-arm64 }
-          - { os: darwin, arch: amd64, ext: , target: macos-amd64 }
-          - { os: darwin, arch: arm64, ext: , target: macos-arm64 }
-          - { os: android, arch: arm, ext: , target: android-arm }
-          - { os: android, arch: arm64, ext: , target: android-arm64 }
+          - { os: windows, arch: 386, ext: .exe, target: windows-32, group: "windows" }
+          - { os: windows, arch: amd64, ext: .exe, target: windows-64, group: "windows" }
+          - { os: linux, arch: 386, ext: , target: linux-32, group: "linux" }
+          - { os: linux, arch: amd64, ext: , target: linux-64, group: "linux" }
+          - { os: linux, arch: arm, ext: , target: linux-arm, group: "linux" }
+          - { os: linux, arch: arm64, ext: , target: linux-arm64, group: "linux" }
+          - { os: darwin, arch: amd64, ext: , target: macos-intel, group: "macos" }
+          - { os: darwin, arch: arm64, ext: , target: macos-arm64, group: "macos" }
+          - { os: android, arch: arm, ext: , target: android-arm, group: "android" }
+          - { os: android, arch: arm64, ext: , target: android-arm64, group: "android" }
+      
+      # 根据手动触发输入过滤平台
+      include: ${{ fromJson(needs.setup.outputs.selected-platforms) }}
 
     steps:
       - name: Checkout code
@@ -32,49 +51,87 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Set up Android NDK (for Android builds)
-        if: startsWith(matrix.platform.target, 'android')
+      - name: Set up Android NDK
+        if: matrix.platform.group == 'android'
         uses: android-actions/setup-android-ndk@v1
         with:
           ndk-version: '25.1.8937393'
 
-      - name: Build
+      - name: Build binary
         env:
           GOOS: ${{ matrix.platform.os }}
           GOARCH: ${{ matrix.platform.arch }}
-          CGO_ENABLED: ${{ startsWith(matrix.platform.target, 'android') && '0' || '1' }}
-          # Android specific env vars
-          CC: ${{ startsWith(matrix.platform.target, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}21-clang', env.ANDROID_NDK_HOME, matrix.platform.arch == 'arm' && 'armv7a-linux-androideabi' || 'aarch64-linux-android') || '' }}
-          CXX: ${{ startsWith(matrix.platform.target, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}21-clang++', env.ANDROID_NDK_HOME, matrix.platform.arch == 'arm' && 'armv7a-linux-androideabi' || 'aarch64-linux-android') || '' }}
+          CGO_ENABLED: ${{ matrix.platform.group == 'android' && '0' || '1' }}
+          # Android 专用环境变量
+          CC: ${{ matrix.platform.group == 'android' && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}21-clang', env.ANDROID_NDK_HOME, matrix.platform.arch == 'arm' && 'armv7a-linux-androideabi' || 'aarch64-linux-android') || '' }}
+          CXX: ${{ matrix.platform.group == 'android' && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}21-clang++', env.ANDROID_NDK_HOME, matrix.platform.arch == 'arm' && 'armv7a-linux-androideabi' || 'aarch64-linux-android') || '' }}
         run: |
-          # 创建输出目录
+          # 创建平台专用目录
           mkdir -p release/${{ matrix.platform.target }}
           
-          # 构建主程序
+          # 构建二进制文件
           output_name="dynv6-ddns${{ matrix.platform.ext }}"
           go build -ldflags="-s -w" -o $output_name .
           
-          # 复制静态文件
+          # 复制静态资源
           cp -r static release/${{ matrix.platform.target }}/
           
           # 移动二进制文件
-          mv $output_name release/${{ matrix.platform.target }}/dynv6-ddns${{ matrix.platform.ext }}
+          mv $output_name release/${{ matrix.platform.target }}/
           
-          # 创建压缩包
-          cd release && tar -czf ${{ matrix.platform.target }}.tar.gz ${{ matrix.platform.target }}
+          # 创建压缩包（包含版本信息）
+          cd release
+          tar -czf ${{ matrix.platform.target }}-${{ github.ref_name || 'dev' }}.tar.gz ${{ matrix.platform.target }}
+          rm -rf ${{ matrix.platform.target }}
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
           name: dynv6-ddns-${{ matrix.platform.target }}
-          path: release/${{ matrix.platform.target }}.tar.gz
+          path: release/${{ matrix.platform.target }}-*.tar.gz
+
+  # 前置工作（用于手动触发时过滤平台）
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      selected-platforms: ${{ steps.filter-platforms.outputs.selected-platforms }}
+    steps:
+      - name: Filter platforms
+        id: filter-platforms
+        run: |
+          # 自动触发时使用全部平台
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo '::set-output name=selected-platforms::[]'
+            exit 0
+          fi
+          
+          # 手动触发时根据选择过滤
+          case "${{ inputs.target-platforms }}" in
+            "windows")
+              echo '::set-output name=selected-platforms::[{"os":"windows","arch":"386","ext":".exe","target":"windows-32","group":"windows"},{"os":"windows","arch":"amd64","ext":".exe","target":"windows-64","group":"windows"}]'
+              ;;
+            "linux")
+              echo '::set-output name=selected-platforms::[{"os":"linux","arch":"386","ext":"","target":"linux-32","group":"linux"},{"os":"linux","arch":"amd64","ext":"","target":"linux-64","group":"linux"},{"os":"linux","arch":"arm","ext":"","target":"linux-arm","group":"linux"},{"os":"linux","arch":"arm64","ext":"","target":"linux-arm64","group":"linux"}]'
+              ;;
+            "macos")
+              echo '::set-output name=selected-platforms::[{"os":"darwin","arch":"amd64","ext":"","target":"macos-intel","group":"macos"},{"os":"darwin","arch":"arm64","ext":"","target":"macos-arm64","group":"macos"}]'
+              ;;
+            "android")
+              echo '::set-output name=selected-platforms::[{"os":"android","arch":"arm","ext":"","target":"android-arm","group":"android"},{"os":"android","arch":"arm64","ext":"","target":"android-arm64","group":"android"}]'
+              ;;
+            *)
+              echo '::set-output name=selected-platforms::[]'
+              ;;
+          esac
 
   release:
     name: Create Release
-    needs: build
+    needs: [build]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v3
         with:
           path: artifacts
@@ -85,12 +142,19 @@ jobs:
           tag_name: ${{ github.ref }}
           name: Release ${{ github.ref_name }}
           body: |
-            Dynv6 DDNS Updater - 多平台构建
+            🚀 Dynv6 DDNS Updater ${{ github.ref_name }}
             
-            ### 支持平台:
-            - Windows (32/64位)
-            - Linux (32/64位, ARM/ARM64)
-            - macOS (Intel/Apple Silicon)
-            - Android (ARM/ARM64)
+            ### 支持平台
+            | 平台 | 架构 |
+            |------|------|
+            | Windows | 32-bit, 64-bit |
+            | Linux | 32-bit, 64-bit, ARM, ARM64 |
+            | macOS | Intel, Apple Silicon |
+            | Android | ARM, ARM64 |
+            
+            ### 使用说明
+            1. 下载对应平台的压缩包
+            2. 解压后运行 `dynv6-ddns` (Windows 为 `dynv6-ddns.exe`)
+            3. 访问 `http://localhost:8080` 进行配置
           files: |
             artifacts/**/*.tar.gz

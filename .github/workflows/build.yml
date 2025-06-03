@@ -100,10 +100,19 @@ jobs:
           go-version: '1.24.2'  # 与 go.mod 匹配
         continue-on-error: true  # 允许下载失败继续
 
+      # 调试 Go 环境
+      - name: 调试 Go 环境
+        run: |
+          go env
+          go version
+          which go
+
       # 为 Windows 安装 MinGW
       - name: 为 Windows 安装 MinGW
         if: contains(matrix.target.goos, 'windows')
-        run: choco install mingw --force
+        run: |
+          choco install mingw --force
+          x86_64-w64-mingw32-gcc --version
         shell: powershell
 
       # 为 Android 构建安装 NDK
@@ -129,6 +138,7 @@ jobs:
           CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
           CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-gcc' || '' }}
           CXX: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang++', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-g++' || '' }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: go test ./... -v
         continue-on-error: true  # 允许测试失败
 
@@ -142,6 +152,9 @@ jobs:
           CXX: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang++', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-g++' || '' }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
+          echo "CGO_ENABLED=$CGO_ENABLED"
+          echo "CC=$CC"
+          echo "CXX=$CXX"
           go build -o dynv6${{ matrix.target.ext }} -ldflags "-s -w" .
 
       # 打包二进制文件和静态文件

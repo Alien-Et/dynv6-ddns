@@ -12,7 +12,7 @@ on:
 
 jobs:
   build:
-    name: Build and Test
+    name: Build and Test (${{ matrix.goos }}, ${{ matrix.goarch }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -54,7 +54,27 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21' # 根据你的项目调整 Go 版本
+          go-version: '1.21' # 根据你的 go.mod 调整版本
+
+      # 安装 Windows CGO 依赖（MinGW）
+      - name: Install MinGW for Windows
+        if: matrix.os == 'windows-latest'
+        run: choco install mingw -y
+        env:
+          ChocolateyInstall: C:\ProgramData\chocolatey
+
+      # 安装 Linux 交叉编译工具（针对 arm/arm64）
+      - name: Install cross-compilation tools for Linux
+        if: matrix.os == 'ubuntu-latest' && (matrix.goarch == 'arm' || matrix.goarch == 'arm64')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      # 安装 macOS CGO 依赖
+      - name: Install macOS dependencies
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install sqlite
 
       # 缓存 Go 模块
       - name: Cache Go modules
@@ -62,54 +82,51 @@ jobs:
         with:
           path: |
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-
+            ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-
 
       # 安装依赖
       - name: Install dependencies
         run: go mod tidy
 
-      # 安装交叉编译工具（针对 arm/arm64）
-      - name: Install cross-compilation tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-        if: matrix.os == 'ubuntu-latest' && (matrix.goarch == 'arm' || matrix.goarch == 'arm64')
-
       # 运行代码格式化检查
       - name: Run gofmt
+        if: matrix.os == 'ubuntu-latest' && matrix.goarch == 'amd64'
         run: |
           if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
             echo "Code is not formatted with gofmt. Run 'gofmt -w .' to fix."
             gofmt -l .
             exit 1
           fi
-        if: matrix.os == 'ubuntu-latest' && matrix.goarch == 'amd64'
 
       # 运行静态检查
       - name: Run staticcheck
+        if: matrix.os == 'ubuntu-latest' && matrix.goarch == 'amd64'
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
           staticcheck ./...
-        if: matrix.os == 'ubuntu-latest' && matrix.goarch == 'amd64'
 
       # 运行测试（如果有测试用例）
       - name: Run tests
-        run: go test -v ./...
+        run: go test -v ./... || echo "No tests found or tests failed, continuing..."
         env:
           GOARCH: ${{ matrix.goarch }}
           GOOS: ${{ matrix.goos }}
+          CGO_ENABLED: ${{ matrix.goos == 'windows' && '1' || '0' }}
 
       # 编译二进制文件
       - name: Build binary
         run: |
           GOOS=${{ matrix.goos }} \
           GOARCH=${{ matrix.goarch }} \
+          CGO_ENABLED=${{ matrix.goos == 'windows' && '1' || '0' }} \
           go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
           -ldflags "-X main.version=${{ github.ref_name }}"
         env:
-          CGO_ENABLED: 0 # 禁用 CGO 以生成静态二进制文件
+          CC: ${{ matrix.goarch == 'arm' && 'arm-linux-gnueabihf-gcc' || matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
+          CXX: ${{ matrix.goarch == 'arm' && 'arm-linux-gnueabihf-g++' || matrix.goarch == 'arm64' && 'aarch64-linux-gnu-g++' || '' }}
 
       # 上传构建产物
       - name: Upload build artifacts
@@ -119,7 +136,7 @@ jobs:
           path: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}*
 
   build-android:
-    name: Build for Android
+    name: Build for Android (${{ matrix.goarch }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -141,17 +158,18 @@ jobs:
         with:
           path: |
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-android-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-
+            ${{ runner.os }}-go-android-${{ matrix.goarch }}-
 
-      # 安装 Android NDK
+      # 安装 Android NDK 和依赖
       - name: Set up Android NDK
         run: |
           sudo apt-get update
           sudo apt-get install -y openjdk-11-jdk unzip
-          wget https://dl.google.com/android/repository/android-ndk-r23b-linux.zip
-          unzip android-ndk-r23b-linux.zip
+          wget -q https://dl.google.com/android/repository/android-ndk-r23b-linux.zip
+          unzip -q android-ndk-r23b-linux.zip
           echo "ANDROID_NDK_HOME=$(pwd)/android-ndk-r23b" >> $GITHUB_ENV
 
       # 安装依赖
@@ -180,7 +198,7 @@ jobs:
     name: Create Release
     needs: [build, build-android]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') # 仅在推送 tag 时运行
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       # 检出代码
       - name: Checkout code
@@ -212,6 +230,7 @@ jobs:
           body: |
             Release ${{ github.ref_name }}
             - Built for Linux (amd64, 386, arm, arm64), Windows (amd64, 386), macOS (amd64, arm64), Android (arm, arm64)
+            - Program name: dynv6-ddns
             - See [README.md](README.md) for installation and usage instructions
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -31,14 +31,14 @@ jobs:
               goarch: 386
               ext: ""
           # Windows 64-bit
-          - os: windows-latest
+          - os: windows-2022  # 使用 windows-2022 提高稳定性
             target:
               name: windows-amd64
               goos: windows
               goarch: amd64
               ext: ".exe"
           # Windows 32-bit
-          - os: windows-latest
+          - os: windows-2022
             target:
               name: windows-i386
               goos: windows
@@ -93,15 +93,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      # 设置 Go 环境（添加重试机制）
+      # 设置 Go 环境
       - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
           go-version: '1.24.2'  # 与 go.mod 匹配
-        continue-on-error: true  # 允许下载失败继续尝试
-        retry:
-          max-attempts: 3
-          wait-ms: 1000
+        continue-on-error: true  # 允许下载失败继续
 
       # 为 Windows 安装 MinGW
       - name: 为 Windows 安装 MinGW
@@ -128,7 +125,7 @@ jobs:
       - name: 运行测试
         env:
           CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
-          CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'gcc' || '' }}
+          CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-gcc' || '' }}
         run: go test ./... -v
         continue-on-error: true  # 允许测试失败
 
@@ -138,7 +135,7 @@ jobs:
           GOOS: ${{ matrix.target.goos }}
           GOARCH: ${{ matrix.target.goarch }}
           CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
-          CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'gcc' || '' }}
+          CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-gcc' || '' }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           go build -o dynv6${{ matrix.target.ext }} -ldflags "-s -w" .

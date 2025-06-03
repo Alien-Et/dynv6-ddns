@@ -1,6 +1,5 @@
 name: Build Cross-Platform Binaries
 
-# 触发条件：推送到 main 分支、创建 v* 标签或提交拉取请求
 on:
   push:
     branches:
@@ -93,14 +92,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      # 设置 Go 环境
+      # 设置 Go 环境（修复后：指定官方源 + 国内代理）
       - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'  # 与 go.mod 匹配
+          go-version: '1.24.2'
+          distribution: 'official'  # 使用官方发行版
+        env:
+          GOPROXY: https://goproxy.cn,direct  # 国内镜像加速
         continue-on-error: true  # 允许下载失败继续
 
-      # 为 Windows 安装 MinGW
+      # 为 Windows 安装 MinGW（调整顺序到设置Go之后）
       - name: 为 Windows 安装 MinGW
         if: contains(matrix.target.goos, 'windows')
         run: choco install mingw --force
@@ -114,14 +116,14 @@ jobs:
           ndk-version: r26d
         id: setup-ndk
 
-      # 调试 NDK 工具链路径
+      # 调试 NDK 工具链路径（可选，保留用于排查）
       - name: 调试 NDK 工具链路径
         if: contains(matrix.target.goos, 'android')
         run: |
           echo "NDK Path: ${{ steps.setup-ndk.outputs.ndk-path }}"
           ls -R ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin
 
-      # 运行测试
+      # 运行测试（显式控制CGO）
       - name: 运行测试
         env:
           CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
@@ -129,12 +131,12 @@ jobs:
         run: go test ./... -v
         continue-on-error: true  # 允许测试失败
 
-      # 构建二进制文件
+      # 构建二进制文件（强制启用CGO for Android/Windows）
       - name: 构建二进制文件
         env:
           GOOS: ${{ matrix.target.goos }}
           GOARCH: ${{ matrix.target.goarch }}
-          CGO_ENABLED: ${{ contains(matrix.target.goos, 'android') || contains(matrix.target.goos, 'windows') && '1' || '0' }}
+          CGO_ENABLED: "1"  # 强制启用CGO（关键修复点）
           CC: ${{ contains(matrix.target.goos, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}{2}-clang', steps.setup-ndk.outputs.ndk-path, matrix.target.ndk_target, matrix.target.api_level) || contains(matrix.target.goos, 'windows') && 'x86_64-w64-mingw32-gcc' || '' }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |

@@ -1,125 +1,96 @@
-name: CI and Release
+name: Release Build
 
 on:
   push:
-    branches:
-      - main
     tags:
-      - "v*.*.*" # 触发 Release 的 tag 格式，例如 v1.0.0
-  pull_request:
-    branches:
-      - main
+      - 'v*' # 触发版本标签 (如 v1.0.0)
 
 jobs:
   build:
-    name: Build and Test
-    runs-on: ${{ matrix.os }}
+    name: Build
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        arch: [amd64, arm64]
-        exclude:
-          # macOS 不支持 arm64 上的 Windows 构建，排除此组合
-          - os: windows-latest
-            arch: arm64
-      fail-fast: false
+        platform: 
+          - { os: windows, arch: 386, ext: .exe, target: windows-32 }
+          - { os: windows, arch: amd64, ext: .exe, target: windows-64 }
+          - { os: linux, arch: 386, ext: , target: linux-32 }
+          - { os: linux, arch: amd64, ext: , target: linux-64 }
+          - { os: linux, arch: arm, ext: , target: linux-arm }
+          - { os: linux, arch: arm64, ext: , target: linux-arm64 }
+          - { os: darwin, arch: amd64, ext: , target: macos-amd64 }
+          - { os: darwin, arch: arm64, ext: , target: macos-arm64 }
+          - { os: android, arch: arm, ext: , target: android-arm }
+          - { os: android, arch: arm64, ext: , target: android-arm64 }
 
     steps:
-      # 检出代码
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      # 设置 Go 环境
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v3
         with:
-          go-version: '1.21' # 根据你的项目要求调整 Go 版本
+          go-version: '1.21'
 
-      # 缓存 Go 模块
-      - name: Cache Go modules
-        uses: actions/cache@v4
+      - name: Set up Android NDK (for Android builds)
+        if: startsWith(matrix.platform.target, 'android')
+        uses: android-actions/setup-android-ndk@v1
         with:
-          path: |
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          ndk-version: '25.1.8937393'
 
-      # 安装依赖
-      - name: Install dependencies
-        run: go mod tidy
-
-      # 运行代码格式化检查
-      - name: Run gofmt
-        run: |
-          if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
-            echo "Code is not formatted with gofmt. Run 'gofmt -w .' to fix."
-            gofmt -l .
-            exit 1
-          fi
-        if: matrix.os == 'ubuntu-latest' # 只在 Ubuntu 上运行格式化检查
-
-      # 运行静态检查（可选）
-      - name: Run staticcheck
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
-        if: matrix.os == 'ubuntu-latest' # 只在 Ubuntu 上运行静态检查
-
-      # 运行测试（如果有测试用例）
-      - name: Run tests
-        run: go test -v ./...
+      - name: Build
         env:
-          GOARCH: ${{ matrix.arch }}
-
-      # 编译二进制文件
-      - name: Build binary
+          GOOS: ${{ matrix.platform.os }}
+          GOARCH: ${{ matrix.platform.arch }}
+          CGO_ENABLED: ${{ startsWith(matrix.platform.target, 'android') && '0' || '1' }}
+          # Android specific env vars
+          CC: ${{ startsWith(matrix.platform.target, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}21-clang', env.ANDROID_NDK_HOME, matrix.platform.arch == 'arm' && 'armv7a-linux-androideabi' || 'aarch64-linux-android') || '' }}
+          CXX: ${{ startsWith(matrix.platform.target, 'android') && format('{0}/toolchains/llvm/prebuilt/linux-x86_64/bin/{1}21-clang++', env.ANDROID_NDK_HOME, matrix.platform.arch == 'arm' && 'armv7a-linux-androideabi' || 'aarch64-linux-android') || '' }}
         run: |
-          GOOS=${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'windows-latest' && 'windows' || 'darwin' }} \
-          GOARCH=${{ matrix.arch }} \
-          go build -o dynv6-ddns-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows-latest' && '.exe' || '' }} \
-          -ldflags "-X main.version=${{ github.ref_name }}"
-        env:
-          CGO_ENABLED: 0 # 禁用 CGO 以生成静态二进制文件
+          # 创建输出目录
+          mkdir -p release/${{ matrix.platform.target }}
+          
+          # 构建主程序
+          output_name="dynv6-ddns${{ matrix.platform.ext }}"
+          go build -ldflags="-s -w" -o $output_name .
+          
+          # 复制静态文件
+          cp -r static release/${{ matrix.platform.target }}/
+          
+          # 移动二进制文件
+          mv $output_name release/${{ matrix.platform.target }}/dynv6-ddns${{ matrix.platform.ext }}
+          
+          # 创建压缩包
+          cd release && tar -czf ${{ matrix.platform.target }}.tar.gz ${{ matrix.platform.target }}
 
-      # 上传构建产物（仅用于调试）
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
         with:
-          name: dynv6-ddns-${{ matrix.os }}-${{ matrix.arch }}
-          path: dynv6-ddns-${{ matrix.os }}-${{ matrix.arch }}*
+          name: dynv6-ddns-${{ matrix.platform.target }}
+          path: release/${{ matrix.platform.target }}.tar.gz
 
   release:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') # 仅在推送 tag 时运行
     steps:
-      # 检出代码
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # 下载所有构建产物
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
         with:
           path: artifacts
 
-      # 创建 Release 并上传二进制文件
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Create release
+        uses: softprops/action-gh-release@v1
         with:
-          files: |
-            artifacts/dynv6-ddns-ubuntu-latest-amd64/dynv6-ddns-ubuntu-latest-amd64
-            artifacts/dynv6-ddns-ubuntu-latest-arm64/dynv6-ddns-ubuntu-latest-arm64
-            artifacts/dynv6-ddns-windows-latest-amd64/dynv6-ddns-windows-latest-amd64.exe
-            artifacts/dynv6-ddns-macos-latest-amd64/dynv6-ddns-macos-latest-amd64
-            artifacts/dynv6-ddns-macos-latest-arm64/dynv6-ddns-macos-latest-arm64
-          draft: false
-          prerelease: false
+          tag_name: ${{ github.ref }}
+          name: Release ${{ github.ref_name }}
           body: |
-            Release ${{ github.ref_name }}
-            - Built for Linux (amd64, arm64), Windows (amd64), and macOS (amd64, arm64)
-            - See [README.md](README.md) for installation and usage instructions
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            Dynv6 DDNS Updater - 多平台构建
+            
+            ### 支持平台:
+            - Windows (32/64位)
+            - Linux (32/64位, ARM/ARM64)
+            - macOS (Intel/Apple Silicon)
+            - Android (ARM/ARM64)
+          files: |
+            artifacts/**/*.tar.gz

@@ -14,16 +14,66 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: [amd64, 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        goos: [linux, windows, darwin]
+        goarch:
+          - 386
+          - arm
+          - arm64
+          - loong64
+          - mips
+          - mipsle
+          - mips64
+          - mips64le
+          - riscv64
+        exclude:
+          # 合法组合排除不支持平台
           - os: windows-latest
-            goos: windows
-            goarch: [amd64, 386]
+            goarch: arm
+          - os: windows-latest
+            goarch: arm64
+          - os: windows-latest
+            goarch: mips
+          - os: windows-latest
+            goarch: mipsle
+          - os: windows-latest
+            goarch: mips64
+          - os: windows-latest
+            goarch: mips64le
+          - os: windows-latest
+            goarch: riscv64
+          - os: windows-latest
+            goarch: loong64
           - os: macos-latest
+            goarch: arm
+          - os: macos-latest
+            goarch: 386
+          - os: macos-latest
+            goarch: mips
+          - os: macos-latest
+            goarch: mipsle
+          - os: macos-latest
+            goarch: mips64
+          - os: macos-latest
+            goarch: mips64le
+          - os: macos-latest
+            goarch: riscv64
+          - os: macos-latest
+            goarch: loong64
+          - os: ubuntu-latest
+            goarch: amd64   # 新增排除 Linux amd64
+          - os: ubuntu-latest
             goos: darwin
-            goarch: [amd64, arm64]
+          - os: ubuntu-latest
+            goos: windows
+          - os: windows-latest
+            goos: linux
+          - os: windows-latest
+            goos: darwin
+          - os: macos-latest
+            goos: linux
+          - os: macos-latest
+            goos: windows
 
     steps:
       - name: Checkout
@@ -33,12 +83,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-
-      - name: Install MinGW for Windows
-        if: matrix.os == 'windows-latest'
-        run: |
-          choco install mingw -y
-        shell: bash
 
       - name: Install toolchain for Linux
         if: matrix.os == 'ubuntu-latest'
@@ -51,11 +95,7 @@ jobs:
             gcc-mipsel-linux-gnu g++-mipsel-linux-gnu \
             gcc-mips64-linux-gnuabi64 g++-mips64-linux-gnuabi64 \
             gcc-mips64el-linux-gnuabi64 g++-mips64el-linux-gnuabi64 \
-            gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
-          if [[ "${{ matrix.goarch }}" == "loong64" ]]; then
-            echo "loong64 toolchain not available in apt, skipping..."
-          fi
-        shell: bash
+            gcc-riscv64-linux-gnu g++-riscv64-linux-gnu || true
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -63,13 +103,12 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ matrix.os }}-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ matrix.os }}-${{ matrix.goos }}-${{ matrix.goarch }}-
+            ${{ runner.os }}-${{ matrix.goos }}-${{ matrix.goarch }}-
 
       - name: Install dependencies
         run: go mod tidy
-        shell: bash
 
       - name: Run gofmt
         if: matrix.goarch == 'amd64' && matrix.goos == 'linux'
@@ -78,28 +117,25 @@ jobs:
             gofmt -l .
             exit 1
           fi
-        shell: bash
 
       - name: Staticcheck
         if: matrix.goarch == 'amd64' && matrix.goos == 'linux'
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
           staticcheck ./...
-        shell: bash
 
       - name: Build binary
-        shell: bash
+        shell: bash  # 确保在 Windows 上使用 Bash shell
         run: |
-          VERSION=${{ github.ref_name }}
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
           go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
-          -ldflags "-X main.version=${VERSION:-dev}"
+          -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+          path: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}*
 
   build-android:
     name: Build Android (${{ matrix.goarch }})
@@ -118,9 +154,10 @@ jobs:
           go-version: '1.21'
 
       - name: Set up Android NDK
-        uses: androidndk/setup-ndk@v1
-        with:
-          ndk-version: r27
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r27-linux.zip
+          unzip -q android-ndk-r27-linux.zip
+          echo "ANDROID_NDK=$(pwd)/android-ndk-r27" >> $GITHUB_ENV
 
       - name: Build Android binary
         run: |
@@ -128,10 +165,8 @@ jobs:
           export CGO_ENABLED=1
           export GOOS=android
           export GOARCH=${{ matrix.goarch }}
-          VERSION=${{ github.ref_name }}
           go build -o dynv6-ddns-android-${{ matrix.goarch }} \
-            -ldflags "-X main.version=${VERSION:-dev}"
-        shell: bash
+            -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
@@ -143,7 +178,7 @@ jobs:
     name: Release
     needs: [build, build-android]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -153,24 +188,17 @@ jobs:
         with:
           path: artifacts
 
-      - name: Organize Artifacts
-        run: |
-          mkdir release
-          find artifacts -type f -name 'dynv6-ddns-*' -exec mv {} release/ \;
-        shell: bash
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*
+          files: |
+            artifacts/**/*
           draft: false
           prerelease: false
           body: |
             🎉 Release ${{ github.ref_name }}
             支持平台和架构：
-            - Linux: amd64, 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64
-            - Windows: amd64, 386
-            - macOS: amd64, arm64
+            - Linux, Windows, macOS: amd64, 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64
             - Android: arm, arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

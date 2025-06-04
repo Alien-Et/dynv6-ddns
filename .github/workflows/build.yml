@@ -95,15 +95,20 @@ jobs:
             gcc-mips64el-linux-gnuabi64 g++-mips64el-linux-gnuabi64 \
             gcc-riscv64-linux-gnu g++-riscv64-linux-gnu || true
 
+      - name: Clear cache directories
+        run: |
+          rm -rf ${{ runner.temp }}/go-build-${{ matrix.goos }}-${{ matrix.goarch }}
+          rm -rf ${{ runner.temp }}/go-pkg-mod
+
       - name: Cache Go modules
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/go-build-${{ matrix.goos }}-${{ matrix.goarch }}
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-build-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
+            ${{ runner.temp }}/go-build-${{ matrix.goos }}-${{ matrix.goarch }}
+            ${{ runner.temp }}/go-pkg-mod
+          key: ${{ runner.os }}-${{ matrix.goos }}-${{ matrix.goarch }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-build-${{ matrix.goos }}-${{ matrix.goarch }}-
+            ${{ runner.os }}-${{ matrix.goos }}-${{ matrix.goarch }}-go-
 
       - name: Install dependencies
         run: go mod tidy
@@ -125,7 +130,6 @@ jobs:
       - name: Build binary
         shell: bash
         run: |
-          rm -rf dist/${{ matrix.goos }}-${{ matrix.goarch }}
           mkdir -p dist/${{ matrix.goos }}-${{ matrix.goarch }}
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
           go build -o dist/${{ matrix.goos }}-${{ matrix.goarch }}/dynv6-ddns${{ matrix.goos == 'windows' && '.exe' || '' }} \
@@ -135,12 +139,10 @@ jobs:
         shell: bash
         run: |
           cd dist/${{ matrix.goos }}-${{ matrix.goarch }}
-          rm -f ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip
-          if tar --version &>/dev/null; then
-            tar -czf ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz . || true
-          fi
-          if [ ! -f ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ]; then
-            zip -r ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip . || true
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            zip ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip *
+          else
+            tar -czf ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz .
           fi
           cd -
 
@@ -173,16 +175,25 @@ jobs:
           unzip -q android-ndk-r27-linux.zip
           echo "ANDROID_NDK=$(pwd)/android-ndk-r27" >> $GITHUB_ENV
 
-      - name: Build Android binary
-        shell: bash
+      - name: Clear cache directories
         run: |
-          rm -rf dist/android-${{ matrix.goarch }}
+          rm -rf ${{ runner.temp }}/go-build-android-${{ matrix.goarch }}
+          rm -rf ${{ runner.temp }}/go-pkg-mod-android
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/go-build-android-${{ matrix.goarch }}
+            ${{ runner.temp }}/go-pkg-mod-android
+          key: ${{ runner.os }}-android-${{ matrix.goarch }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-android-${{ matrix.goarch }}-go-
+
+      - name: Build Android binary
+        run: |
           mkdir -p dist/android-${{ matrix.goarch }}
-          if [ "${{ matrix.goarch }}" == "arm" ]; then
-            export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang
-          else
-            export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
-          fi
+          export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang' || 'aarch64-linux-android21-clang' }}
           export CGO_ENABLED=1
           export GOOS=android
           export GOARCH=${{ matrix.goarch }}
@@ -192,13 +203,7 @@ jobs:
         shell: bash
         run: |
           cd dist/android-${{ matrix.goarch }}
-          rm -f ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz ../dynv6-ddns-android-${{ matrix.goarch }}.zip
-          if tar --version &>/dev/null; then
-            tar -czf ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz . || true
-          fi
-          if [ ! -f ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz ]; then
-            zip -r ../dynv6-ddns-android-${{ matrix.goarch }}.zip . || true
-          fi
+          tar -czf ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz .
           cd -
 
       - name: Upload Android Artifacts
@@ -222,16 +227,6 @@ jobs:
         with:
           path: release-assets
 
-      - name: Clean release-assets directory before untar
-        shell: bash
-        run: |
-          find release-assets -type d -exec rm -rf {}/* \; || true
-
-      - name: Extract artifacts (if needed)
-        shell: bash
-        run: |
-          # 这里如果需要对压缩包解压再上传，可以写解压命令，通常无需解压直接上传压缩包
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -240,7 +235,7 @@ jobs:
           prerelease: false
           body: |
             🎉 Release ${{ github.ref_name }}
-            支持平台和架构：
+            Supported platforms and architectures:
             - Linux, Windows, macOS: amd64, 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64
             - Android: arm, arm64
         env:

@@ -22,8 +22,8 @@ import (
 type Config struct {
 	GlobalSettings struct {
 		UpdateIntervalSeconds int    `json:"updateIntervalSeconds"`
-		NetworkInterface     string `json:"networkInterface"`
-		IPType               string `json:"ipType"`
+		NetworkInterface      string `json:"networkInterface"`
+		IPType                string `json:"ipType"`
 	} `json:"globalSettings"`
 	DomainList struct {
 		Domains []string `json:"domains"`

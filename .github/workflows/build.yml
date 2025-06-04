@@ -1,236 +1,98 @@
-name: CI and Release
+name: Build All Platforms
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - "v*.*.*" # 触发 Release 的 tag 格式，例如 v1.0.0
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  BINARY_NAME: dynv6-ddns
 
 jobs:
-  build:
-    name: Build and Test (${{ matrix.goos }}, ${{ matrix.goarch }})
+  build-matrix:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        goos: [linux, windows, darwin]
-        goarch: [arm, arm64, 386, amd64]
-        exclude:
-          # Windows 不支持 arm/arm64
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+        arch: [amd64, arm64]
+        include:
+          - os: ubuntu-24.04
+            arch: armv7
+          - os: ubuntu-24.04
+            arch: arm64
+          - os: ubuntu-24.04
+            arch: amd64
           - os: windows-latest
-            goarch: arm
-          - os: windows-latest
-            goarch: arm64
-          # macOS 不支持 arm/386
+            arch: amd64
           - os: macos-latest
-            goarch: arm
-          - os: macos-latest
-            goarch: 386
-          # 确保 GOOS 和 runner OS 匹配
-          - os: ubuntu-latest
-            goos: windows
-          - os: ubuntu-latest
-            goos: darwin
-          - os: windows-latest
-            goos: linux
-          - os: windows-latest
-            goos: darwin
-          - os: macos-latest
-            goos: linux
-          - os: macos-latest
-            goos: windows
-      fail-fast: false
+            arch: amd64
 
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
     steps:
-      # 检出代码
-      - name: Checkout code
+      - name: 检出仓库代码
         uses: actions/checkout@v4
 
-      # 设置 Go 环境
-      - name: Set up Go
+      - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21' # 根据你的 go.mod 调整版本
+          go-version: '1.22'
 
-      # 安装 Windows CGO 依赖（MinGW）
-      - name: Install MinGW for Windows
-        if: matrix.os == 'windows-latest'
-        run: choco install mingw -y
-        env:
-          ChocolateyInstall: C:\ProgramData\chocolatey
-
-      # 安装 Linux 交叉编译工具（针对 arm/arm64）
-      - name: Install cross-compilation tools for Linux
-        if: matrix.os == 'ubuntu-latest' && (matrix.goarch == 'arm' || matrix.goarch == 'arm64')
+      - name: 设置目标架构环境变量
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          case "${{ matrix.arch }}" in
+            amd64)
+              echo "GOARCH=amd64" >> $GITHUB_ENV
+              ;;
+            arm64)
+              echo "GOARCH=arm64" >> $GITHUB_ENV
+              ;;
+            armv7)
+              echo "GOARCH=arm" >> $GITHUB_ENV
+              echo "GOARM=7" >> $GITHUB_ENV
+              ;;
+          esac
+          echo "GOOS=$(uname | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      # 安装 macOS CGO 依赖
-      - name: Install macOS dependencies
-        if: matrix.os == 'macos-latest'
+      - name: 编译二进制
         run: |
-          brew install sqlite
+          mkdir -p build
+          go build -v -o build/${{ env.BINARY_NAME }}-${{ matrix.os }}-${{ matrix.arch }} .
 
-      # 缓存 Go 模块
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-
-
-      # 安装依赖
-      - name: Install dependencies
-        run: go mod tidy
-
-      # 运行代码格式化检查
-      - name: Run gofmt
-        if: matrix.os == 'ubuntu-latest' && matrix.goarch == 'amd64'
-        run: |
-          if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
-            echo "Code is not formatted with gofmt. Run 'gofmt -w .' to fix."
-            gofmt -l .
-            exit 1
-          fi
-
-      # 运行静态检查
-      - name: Run staticcheck
-        if: matrix.os == 'ubuntu-latest' && matrix.goarch == 'amd64'
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
-
-      # 运行测试（如果有测试用例）
-      - name: Run tests
-        run: go test -v ./... || echo "No tests found or tests failed, continuing..."
-        env:
-          GOARCH: ${{ matrix.goarch }}
-          GOOS: ${{ matrix.goos }}
-          CGO_ENABLED: ${{ matrix.goos == 'windows' && '1' || '0' }}
-
-      # 编译二进制文件
-      - name: Build binary
-        run: |
-          GOOS=${{ matrix.goos }} \
-          GOARCH=${{ matrix.goarch }} \
-          CGO_ENABLED=${{ matrix.goos == 'windows' && '1' || '0' }} \
-          go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
-          -ldflags "-X main.version=${{ github.ref_name }}"
-        env:
-          CC: ${{ matrix.goarch == 'arm' && 'arm-linux-gnueabihf-gcc' || matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
-          CXX: ${{ matrix.goarch == 'arm' && 'arm-linux-gnueabihf-g++' || matrix.goarch == 'arm64' && 'aarch64-linux-gnu-g++' || '' }}
-
-      # 上传构建产物
-      - name: Upload build artifacts
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}*
+          name: ${{ env.BINARY_NAME }}-${{ matrix.os }}-${{ matrix.arch }}
+          path: build/${{ env.BINARY_NAME }}-${{ matrix.os }}-${{ matrix.arch }}
 
-  build-android:
-    name: Build for Android (${{ matrix.goarch }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        goarch: [arm, arm64]
+  android:
+    name: Build for Android (Termux)
+    runs-on: ubuntu-24.04
     steps:
-      # 检出代码
-      - name: Checkout code
+      - name: 检出仓库代码
         uses: actions/checkout@v4
 
-      # 设置 Go 环境
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      # 缓存 Go 模块
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-android-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-android-${{ matrix.goarch }}-
-
-      # 安装 Android NDK 和依赖
-      - name: Set up Android NDK
+      - name: 安装依赖项
         run: |
-          sudo apt-get update
-          sudo apt-get install -y openjdk-11-jdk unzip
-          wget -q https://dl.google.com/android/repository/android-ndk-r23b-linux.zip
-          unzip -q android-ndk-r23b-linux.zip
-          echo "ANDROID_NDK_HOME=$(pwd)/android-ndk-r23b" >> $GITHUB_ENV
+          sudo apt update && sudo apt install -y wget unzip
+          wget https://dl.google.com/android/repository/android-ndk-r27d-linux.zip -O ndk.zip
+          unzip ndk.zip -d $HOME
+          echo "ANDROID_NDK_HOME=$HOME/android-ndk-r27d" >> $GITHUB_ENV
 
-      # 安装依赖
-      - name: Install dependencies
-        run: go mod tidy
-
-      # 编译 Android 二进制
-      - name: Build Android binary
+      - name: 设置交叉编译环境 (Android)
         run: |
-          GOOS=android \
-          GOARCH=${{ matrix.goarch }} \
-          CGO_ENABLED=1 \
-          CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang' || 'aarch64-linux-android21-clang' }} \
-          CXX=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang++' || 'aarch64-linux-android21-clang++' }} \
-          go build -o dynv6-ddns-android-${{ matrix.goarch }} \
-          -ldflags "-X main.version=${{ github.ref_name }}"
+          export NDK=$ANDROID_NDK_HOME
+          export PATH=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+          export CC=aarch64-linux-android21-clang
+          export GOOS=android
+          export GOARCH=arm64
+          export CGO_ENABLED=1
+          mkdir -p build
+          CC=$CC go build -v -o build/${{ env.BINARY_NAME }}-android-arm64 .
 
-      # 上传 Android 构建产物
-      - name: Upload Android artifacts
+      - name: 上传 Android 构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: dynv6-ddns-android-${{ matrix.goarch }}
-          path: dynv6-ddns-android-${{ matrix.goarch }}
-
-  release:
-    name: Create Release
-    needs: [build, build-android]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      # 检出代码
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # 下载所有构建产物
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      # 创建 Release 并上传二进制文件
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            artifacts/dynv6-ddns-linux-amd64/dynv6-ddns-linux-amd64
-            artifacts/dynv6-ddns-linux-arm/dynv6-ddns-linux-arm
-            artifacts/dynv6-ddns-linux-arm64/dynv6-ddns-linux-arm64
-            artifacts/dynv6-ddns-linux-386/dynv6-ddns-linux-386
-            artifacts/dynv6-ddns-windows-amd64/dynv6-ddns-windows-amd64.exe
-            artifacts/dynv6-ddns-windows-386/dynv6-ddns-windows-386.exe
-            artifacts/dynv6-ddns-darwin-amd64/dynv6-ddns-darwin-amd64
-            artifacts/dynv6-ddns-darwin-arm64/dynv6-ddns-darwin-arm64
-            artifacts/dynv6-ddns-android-arm/dynv6-ddns-android-arm
-            artifacts/dynv6-ddns-android-arm64/dynv6-ddns-android-arm64
-          draft: false
-          prerelease: false
-          body: |
-            Release ${{ github.ref_name }}
-            - Built for Linux (amd64, 386, arm, arm64), Windows (amd64, 386), macOS (amd64, arm64), Android (arm, arm64)
-            - Program name: dynv6-ddns
-            - See [README.md](README.md) for installation and usage instructions
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: ${{ env.BINARY_NAME }}-android-arm64
+          path: build/${{ env.BINARY_NAME }}-android-arm64

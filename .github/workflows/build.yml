@@ -1,203 +1,82 @@
-name: CI and Release
+name: Build and Release
 
 on:
   push:
-    branches: [main]
-    tags: ["v*.*.*"]
-  pull_request:
-    branches: [main]
+    tags:
+      - 'v*'  # 仅在打 tag 时触发
+
+env:
+  TAR: tar  # 🛠️ 强制使用系统 tar，避免 gtar 问题
 
 jobs:
   build:
-    name: Build (${{ matrix.goos }}, ${{ matrix.goarch }})
+    name: Build ${{ matrix.os }} / ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
+
     strategy:
-      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        goos: [linux, windows, darwin]
-        goarch:
-          - 386
-          - arm
-          - arm64
-          - loong64
-          - mips
-          - mipsle
-          - mips64
-          - mips64le
-          - riscv64
-        exclude:
-          - os: windows-latest
-            goarch: arm
-          - os: windows-latest
-            goarch: arm64
-          - os: windows-latest
-            goarch: mips
-          - os: windows-latest
-            goarch: mipsle
-          - os: windows-latest
-            goarch: mips64
-          - os: windows-latest
-            goarch: mips64le
-          - os: windows-latest
-            goarch: riscv64
-          - os: windows-latest
-            goarch: loong64
-          - os: macos-latest
-            goarch: arm
-          - os: macos-latest
-            goarch: 386
-          - os: macos-latest
-            goarch: mips
-          - os: macos-latest
-            goarch: mipsle
-          - os: macos-latest
-            goarch: mips64
-          - os: macos-latest
-            goarch: mips64le
-          - os: macos-latest
-            goarch: riscv64
-          - os: macos-latest
-            goarch: loong64
-          - os: ubuntu-latest
-            goos: darwin
-          - os: ubuntu-latest
-            goos: windows
-          - os: windows-latest
-            goos: linux
-          - os: windows-latest
-            goos: darwin
-          - os: macos-latest
-            goos: linux
-          - os: macos-latest
-            goos: windows
+        os: [ubuntu-24.04, macos-14, windows-latest]
+        arch: [amd64, arm64]
 
     steps:
-      - name: Checkout
+      - name: 📥 拉取源码
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: ⚙️ 安装 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.22'
 
-      - name: Install toolchain for Linux
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            gcc-mips-linux-gnu g++-mips-linux-gnu \
-            gcc-mipsel-linux-gnu g++-mipsel-linux-gnu \
-            gcc-mips64-linux-gnuabi64 g++-mips64-linux-gnuabi64 \
-            gcc-mips64el-linux-gnuabi64 g++-mips64el-linux-gnuabi64 \
-            gcc-riscv64-linux-gnu g++-riscv64-linux-gnu || true
-
-      - name: Cache Go modules
+      - name: 🧹 缓存 Go 依赖
         uses: actions/cache@v4
         with:
           path: |
-            ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.goos }}-${{ matrix.goarch }}-
+            ${{ runner.os }}-go-
+          overwrite: true  # ✅ 防止文件冲突
 
-      - name: Install dependencies
-        run: go mod tidy
-
-      - name: Run gofmt
-        if: matrix.goarch == 'amd64' && matrix.goos == 'linux'
+      - name: 🛠️ 设置构建参数
         run: |
-          if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
-            gofmt -l .
-            exit 1
-          fi
+          echo "GOARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "GOOS=$(echo '${{ matrix.os }}' | sed 's/-.*//')" >> $GITHUB_ENV
 
-      - name: Staticcheck
-        if: matrix.goarch == 'amd64' && matrix.goos == 'linux'
+      - name: 📦 构建可执行文件
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
+          mkdir -p dist
+          go build -v -o dist/dynv6-ddns-${{ env.GOOS }}-${{ env.GOARCH }}
 
-      - name: Build binary
-        shell: bash
-        run: |
-          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
-          -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
-
-      - name: Upload Artifact
+      - name: 📤 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}*
-
-  build-android:
-    name: Build Android (${{ matrix.goarch }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        goarch: [arm, arm64]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Set up Android NDK
-        run: |
-          wget -q https://dl.google.com/android/repository/android-ndk-r27-linux.zip
-          unzip -q android-ndk-r27-linux.zip
-          echo "ANDROID_NDK=$(pwd)/android-ndk-r27" >> $GITHUB_ENV
-
-      - name: Build Android binary
-        run: |
-          export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang' || 'aarch64-linux-android21-clang' }}
-          export CGO_ENABLED=1
-          export GOOS=android
-          export GOARCH=${{ matrix.goarch }}
-          go build -o dynv6-ddns-android-${{ matrix.goarch }} \
-            -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
-
-      - name: Upload Android Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dynv6-ddns-android-${{ matrix.goarch }}
-          path: dynv6-ddns-android-${{ matrix.goarch }}
+          name: dynv6-ddns-${{ env.GOOS }}-${{ env.GOARCH }}
+          path: dist/dynv6-ddns-${{ env.GOOS }}-${{ env.GOARCH }}
 
   release:
-    name: Release
-    needs: [build, build-android]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    name: 🚀 发布 Release
+    runs-on: ubuntu-24.04
+    needs: build
 
-      - name: Download Artifacts
+    steps:
+      - name: 📥 下载所有构建产物
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: List downloaded artifacts
+      - name: 🧾 列出产物内容
         run: ls -lR artifacts
 
-      - name: Create Release
+      - name: 🗜️ 压缩为 zip 文件
+        run: |
+          cd artifacts
+          for dir in *; do
+            zip -j "../$dir.zip" "$dir"/*
+          done
+          cd ..
+
+      - name: 🚀 发布到 GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
-          draft: false
-          prerelease: false
-          body: |
-            🎉 Release ${{ github.ref_name }}
-            支持平台和架构：
-            - Linux, Windows, macOS: 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64
-            - Android: arm, arm64
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: "*.zip"

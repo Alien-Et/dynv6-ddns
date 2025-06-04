@@ -99,8 +99,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
+            ~/.cache/go-build-${{ matrix.goos }}-${{ matrix.goarch }}
             ~/go/pkg/mod
-            ~/.cache/go-build
           key: ${{ runner.os }}-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.goos }}-${{ matrix.goarch }}-
@@ -125,15 +125,23 @@ jobs:
       - name: Build binary
         shell: bash
         run: |
+          mkdir -p dist/${{ matrix.goos }}-${{ matrix.goarch }}
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
+          go build -o dist/${{ matrix.goos }}-${{ matrix.goarch }}/dynv6-ddns${{ matrix.goos == 'windows' && '.exe' || '' }} \
           -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
+
+      - name: Compress binary
+        run: |
+          cd dist/${{ matrix.goos }}-${{ matrix.goarch }}
+          tar -czf ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz . || zip ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip * || true
+          cd -
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}*
+          path: |
+            dist/dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.*
 
   build-android:
     name: Build Android (${{ matrix.goarch }})
@@ -159,18 +167,25 @@ jobs:
 
       - name: Build Android binary
         run: |
+          mkdir -p dist/android-${{ matrix.goarch }}
           export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang' || 'aarch64-linux-android21-clang' }}
           export CGO_ENABLED=1
           export GOOS=android
           export GOARCH=${{ matrix.goarch }}
-          go build -o dynv6-ddns-android-${{ matrix.goarch }} \
-            -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
+          go build -o dist/android-${{ matrix.goarch }}/dynv6-ddns -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
+
+      - name: Compress Android binary
+        run: |
+          cd dist/android-${{ matrix.goarch }}
+          tar -czf ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz . || zip ../dynv6-ddns-android-${{ matrix.goarch }}.zip * || true
+          cd -
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: artifact-android-${{ matrix.goarch }}
-          path: dynv6-ddns-android-${{ matrix.goarch }}
+          path: |
+            dist/dynv6-ddns-android-${{ matrix.goarch }}.*
 
   release:
     name: Release
@@ -181,15 +196,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download All Artifacts
+      - name: Download all Artifacts
         uses: actions/download-artifact@v4
         with:
-          path: release-artifacts
+          path: release-assets
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-artifacts/**/*
+          files: release-assets/**/*.tar.gz
           draft: false
           prerelease: false
           body: |

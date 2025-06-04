@@ -7,6 +7,9 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+
 jobs:
   build:
     name: Build (${{ matrix.goos }}, ${{ matrix.goarch }})
@@ -17,6 +20,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         goos: [linux, windows, darwin]
         goarch:
+          - amd64
           - 386
           - arm
           - arm64
@@ -71,8 +75,6 @@ jobs:
             goos: linux
           - os: macos-latest
             goos: windows
-          - goos: linux
-            goarch: amd64
 
     steps:
       - name: Checkout
@@ -127,8 +129,8 @@ jobs:
         shell: bash
         run: |
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
-          -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
+          go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ endsWith(matrix.goos, 'windows') && '.exe' || '' }} \
+          -ldflags "-X main.version=${{ env.VERSION }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -157,15 +159,16 @@ jobs:
           wget -q https://dl.google.com/android/repository/android-ndk-r27-linux.zip
           unzip -q android-ndk-r27-linux.zip
           echo "ANDROID_NDK=$(pwd)/android-ndk-r27" >> $GITHUB_ENV
+          chmod +x $(pwd)/android-ndk-r27/toolchains/llvm/prebuilt/linux-x86_64/bin/*
 
       - name: Build Android binary
         run: |
-          export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang' || 'aarch64-linux-android21-clang' }}
           export CGO_ENABLED=1
+          export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang' || 'aarch64-linux-android21-clang' }}
           export GOOS=android
           export GOARCH=${{ matrix.goarch }}
           go build -o dynv6-ddns-android-${{ matrix.goarch }} \
-            -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
+            -ldflags "-X main.version=${{ env.VERSION }}"
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
@@ -186,6 +189,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -197,7 +201,7 @@ jobs:
           body: |
             🎉 Release ${{ github.ref_name }}
             支持平台和架构：
-            - Linux, Windows, macOS: 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64
+            - Linux, Windows, macOS: amd64, 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64
             - Android: arm, arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -124,6 +124,7 @@ jobs:
           staticcheck ./...
 
       - name: Build binary
+        shell: bash  # 确保在 Windows 上使用 Bash shell
         run: |
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
           go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \

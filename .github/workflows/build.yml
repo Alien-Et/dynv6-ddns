@@ -27,7 +27,6 @@ jobs:
           - mips64le
           - riscv64
         exclude:
-          # 合法组合排除不支持平台
           - os: windows-latest
             goarch: arm
           - os: windows-latest
@@ -60,8 +59,6 @@ jobs:
             goarch: riscv64
           - os: macos-latest
             goarch: loong64
-          - os: ubuntu-latest
-            goarch: amd64   # 新增排除 Linux amd64
           - os: ubuntu-latest
             goos: darwin
           - os: ubuntu-latest
@@ -125,7 +122,7 @@ jobs:
           staticcheck ./...
 
       - name: Build binary
-        shell: bash  # 确保在 Windows 上使用 Bash shell
+        shell: bash
         run: |
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
           go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
@@ -188,17 +185,19 @@ jobs:
         with:
           path: artifacts
 
+      - name: List downloaded artifacts
+        run: ls -lR artifacts
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/**/*
+          files: artifacts/**/*
           draft: false
           prerelease: false
           body: |
             🎉 Release ${{ github.ref_name }}
             支持平台和架构：
-            - Linux, Windows, macOS: amd64, 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64
+            - Linux, Windows, macOS: 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64
             - Android: arm, arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

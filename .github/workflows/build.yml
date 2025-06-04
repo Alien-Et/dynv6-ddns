@@ -7,9 +7,6 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  VERSION: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
-
 jobs:
   build:
     name: Build (${{ matrix.goos }}, ${{ matrix.goarch }})
@@ -129,13 +126,13 @@ jobs:
         shell: bash
         run: |
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ endsWith(matrix.goos, 'windows') && '.exe' || '' }} \
-          -ldflags "-X main.version=${{ env.VERSION }}"
+          go build -o dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
+          -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}*
 
   build-android:
@@ -159,21 +156,20 @@ jobs:
           wget -q https://dl.google.com/android/repository/android-ndk-r27-linux.zip
           unzip -q android-ndk-r27-linux.zip
           echo "ANDROID_NDK=$(pwd)/android-ndk-r27" >> $GITHUB_ENV
-          chmod +x $(pwd)/android-ndk-r27/toolchains/llvm/prebuilt/linux-x86_64/bin/*
 
       - name: Build Android binary
         run: |
-          export CGO_ENABLED=1
           export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.goarch == 'arm' && 'armv7a-linux-androideabi21-clang' || 'aarch64-linux-android21-clang' }}
+          export CGO_ENABLED=1
           export GOOS=android
           export GOARCH=${{ matrix.goarch }}
           go build -o dynv6-ddns-android-${{ matrix.goarch }} \
-            -ldflags "-X main.version=${{ env.VERSION }}"
+            -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dynv6-ddns-android-${{ matrix.goarch }}
+          name: artifact-android-${{ matrix.goarch }}
           path: dynv6-ddns-android-${{ matrix.goarch }}
 
   release:
@@ -185,17 +181,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download Artifacts
+      - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: true
+          path: release-artifacts
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/**/*
+          files: release-artifacts/**/*
           draft: false
           prerelease: false
           body: |

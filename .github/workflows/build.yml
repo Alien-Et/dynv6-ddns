@@ -137,7 +137,7 @@ jobs:
           cd dist/${{ matrix.goos }}-${{ matrix.goarch }}
           rm -f ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip
           if tar --version &>/dev/null; then
-            tar -czf ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz . || true
+            tar --overwrite -czf ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz . || true
           fi
           if [ ! -f ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ]; then
             zip -r ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip . || true
@@ -194,7 +194,7 @@ jobs:
           cd dist/android-${{ matrix.goarch }}
           rm -f ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz ../dynv6-ddns-android-${{ matrix.goarch }}.zip
           if tar --version &>/dev/null; then
-            tar -czf ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz . || true
+            tar --overwrite -czf ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz . || true
           fi
           if [ ! -f ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz ]; then
             zip -r ../dynv6-ddns-android-${{ matrix.goarch }}.zip . || true
@@ -222,15 +222,14 @@ jobs:
         with:
           path: release-assets
 
-      - name: Clean release-assets directory before untar
-        shell: bash
-        run: |
-          find release-assets -type d -exec rm -rf {}/* \; || true
+      # 可选：更安全地清理目录，防止解压冲突 (一般发布时不用解包)
+      # - name: Clean release-assets directory
+      #   run: |
+      #     rm -rf release-assets && mkdir release-assets
 
-      - name: Extract artifacts (if needed)
-        shell: bash
-        run: |
-          # 这里如果需要对压缩包解压再上传，可以写解压命令，通常无需解压直接上传压缩包
+      # - name: Extract artifacts (if needed)
+      #   run: |
+      #     # 通常无需解压 artifacts，发布直接上传压缩包即可
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

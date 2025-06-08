@@ -133,15 +133,15 @@ jobs:
       - name: Compress binary
         shell: bash
         run: |
-          cd dist/${{ matrix.goos }}-${{ matrix.goarch }}
-          rm -f ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.zip
-          if tar --version &>/dev/null; then
-            tar --overwrite -czf ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz . || true
+          cd dist
+          rm -f ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            cd ${{ matrix.goos }}-${{ matrix.goarch }}
+            zip ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.zip *
+            cd ..
+          else
+            tar -czf ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz -C ${{ matrix.goos }}-${{ matrix.goarch }} .
           fi
-          if [ ! -f ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ]; then
-            zip -r ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.zip . || true
-          fi
-          cd -
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -190,15 +190,9 @@ jobs:
       - name: Compress Android binary
         shell: bash
         run: |
-          cd dist/android-${{ matrix.goarch }}
-          rm -f ../ddns-dynv6-android-${{ matrix.goarch }}.tar.gz ../ddns-dynv6-android-${{ matrix.goarch }}.zip
-          if tar --version &>/dev/null; then
-            tar --overwrite -czf ../ddns-dynv6-android-${{ matrix.goarch }}.tar.gz . || true
-          fi
-          if [ ! -f ../ddns-dynv6-android-${{ matrix.goarch }}.tar.gz ]; then
-            zip -r ../ddns-dynv6-android-${{ matrix.goarch }}.zip . || true
-          fi
-          cd -
+          cd dist
+          rm -f ddns-dynv6-android-${{ matrix.goarch }}.tar.gz
+          tar -czf ddns-dynv6-android-${{ matrix.goarch }}.tar.gz -C android-${{ matrix.goarch }} .
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
@@ -225,7 +219,7 @@ jobs:
         with:
           tag_name: "auto-${{ github.run_number }}"
           name: "Auto Release ${{ github.run_number }}"
-          files: release-assets/**/*.tar.gz
+          files: release-assets/**/*.{tar.gz,zip}
           draft: false
           prerelease: false
           body: |

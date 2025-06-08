@@ -28,6 +28,7 @@ jobs:
           - mips64le
           - riscv64
         exclude:
+          # windows/macOS/ubuntu 禁止组合，交叉编译限制
           - os: windows-latest
             goarch: arm
           - os: windows-latest
@@ -86,7 +87,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             gcc-mips-linux-gnu g++-mips-linux-gnu \
@@ -99,11 +100,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/go-build-${{ matrix.goos }}-${{ matrix.goarch }}
+            ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-build-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-build-${{ matrix.goos }}-${{ matrix.goarch }}-
+            ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-
+            ${{ runner.os }}-go-
 
       - name: Install dependencies
         run: go mod tidy
@@ -111,8 +113,10 @@ jobs:
       - name: Run gofmt
         if: matrix.goarch == 'amd64' && matrix.goos == 'linux'
         run: |
-          if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
-            gofmt -l .
+          changed_files=$(gofmt -l .)
+          if [ -n "$changed_files" ]; then
+            echo "The following files need formatting:"
+            echo "$changed_files"
             exit 1
           fi
 
@@ -136,7 +140,7 @@ jobs:
         run: |
           cd dist/${{ matrix.goos }}-${{ matrix.goarch }}
           rm -f ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip
-          if tar --version &>/dev/null; then
+          if command -v tar &>/dev/null; then
             tar -czf ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz . || true
           fi
           if [ ! -f ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ]; then
@@ -193,7 +197,7 @@ jobs:
         run: |
           cd dist/android-${{ matrix.goarch }}
           rm -f ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz ../dynv6-ddns-android-${{ matrix.goarch }}.zip
-          if tar --version &>/dev/null; then
+          if command -v tar &>/dev/null; then
             tar -czf ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz . || true
           fi
           if [ ! -f ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz ]; then
@@ -230,7 +234,7 @@ jobs:
       - name: Extract artifacts (if needed)
         shell: bash
         run: |
-          # 这里如果需要对压缩包解压再上传，可以写解压命令，通常无需解压直接上传压缩包
+          # 解压命令可选，通常无需解压
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

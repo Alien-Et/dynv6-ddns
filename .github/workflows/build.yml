@@ -3,7 +3,6 @@ name: CI and Release
 on:
   push:
     branches: [main]
-    tags: ["v*.*.*"]
   pull_request:
     branches: [main]
 
@@ -128,19 +127,19 @@ jobs:
           rm -rf dist/${{ matrix.goos }}-${{ matrix.goarch }}
           mkdir -p dist/${{ matrix.goos }}-${{ matrix.goarch }}
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -o dist/${{ matrix.goos }}-${{ matrix.goarch }}/dynv6-ddns${{ matrix.goos == 'windows' && '.exe' || '' }} \
+          go build -o dist/${{ matrix.goos }}-${{ matrix.goarch }}/ddns-dynv6${{ matrix.goos == 'windows' && '.exe' || '' }} \
           -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
 
       - name: Compress binary
         shell: bash
         run: |
           cd dist/${{ matrix.goos }}-${{ matrix.goarch }}
-          rm -f ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+          rm -f ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.zip
           if tar --version &>/dev/null; then
-            tar --overwrite -czf ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz . || true
+            tar --overwrite -czf ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz . || true
           fi
-          if [ ! -f ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ]; then
-            zip -r ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip . || true
+          if [ ! -f ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ]; then
+            zip -r ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.zip . || true
           fi
           cd -
 
@@ -149,7 +148,7 @@ jobs:
         with:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            dist/dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.*
+            dist/ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.*
 
   build-android:
     name: Build Android (${{ matrix.goarch }})
@@ -181,23 +180,21 @@ jobs:
           if [ "${{ matrix.goarch }}" == "arm" ]; then
             export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang
           else
-            export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
-          fi
-          export CGO_ENABLED=1
+            export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch          export CGO_ENABLED=1
           export GOOS=android
           export GOARCH=${{ matrix.goarch }}
-          go build -o dist/android-${{ matrix.goarch }}/dynv6-ddns -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
+          go build -o dist/android-${{ matrix.goarch }}/ddns-dynv6 -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
 
       - name: Compress Android binary
         shell: bash
         run: |
           cd dist/android-${{ matrix.goarch }}
-          rm -f ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz ../dynv6-ddns-android-${{ matrix.goarch }}.zip
+          rm -f ../ddns-dynv6-android-${{ matrix.goarch }}.tar.gz ../ddns-dynv6-android-${{ matrix.goarch }}.zip
           if tar --version &>/dev/null; then
-            tar --overwrite -czf ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz . || true
+            tar --overwrite -czf ../ddns-dynv6-android-${{ matrix.goarch }}.tar.gz . || true
           fi
-          if [ ! -f ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz ]; then
-            zip -r ../dynv6-ddns-android-${{ matrix.goarch }}.zip . || true
+          if [ ! -f ../ddns-dynv6-android-${{ matrix.goarch }}.tar.gz ]; then
+            zip -r ../ddns-dynv6-android-${{ matrix.goarch }}.zip . || true
           fi
           cd -
 
@@ -206,13 +203,12 @@ jobs:
         with:
           name: artifact-android-${{ matrix.goarch }}
           path: |
-            dist/dynv6-ddns-android-${{ matrix.goarch }}.*
+            dist/ddns-dynv6-android-${{ matrix.goarch }}.*
 
   release:
     name: Release
     needs: [build, build-android]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -225,11 +221,13 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: "auto-${{ github.run_number }}"
+          name: "Auto Release ${{ github.run_number }}"
           files: release-assets/**/*.tar.gz
           draft: false
           prerelease: false
           body: |
-            🎉 Release ${{ github.ref_name }}
+            🎉 自动发布 ${{ github.run_number }}
             支持平台和架构：
             - Linux, Windows, macOS: amd64, 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64
             - Android: arm, arm64

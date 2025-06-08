@@ -180,7 +180,9 @@ jobs:
           if [ "${{ matrix.goarch }}" == "arm" ]; then
             export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang
           else
-            export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch          export CGO_ENABLED=1
+            export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+          fi
+          export CGO_ENABLED=1
           export GOOS=android
           export GOARCH=${{ matrix.goarch }}
           go build -o dist/android-${{ matrix.goarch }}/ddns-dynv6 -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"

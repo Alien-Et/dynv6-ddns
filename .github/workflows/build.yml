@@ -128,18 +128,19 @@ jobs:
           rm -rf dist/${{ matrix.goos }}-${{ matrix.goarch }}
           mkdir -p dist/${{ matrix.goos }}-${{ matrix.goarch }}
           CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -o dist/${{ matrix.goos }}-${{ matrix.goarch }}/ddns-dynv6${{ matrix.goos == 'windows' && '.exe' || '' }} \
+          go build -o dist/${{ matrix.goos }}-${{ matrix.goarch }}/dynv6-ddns${{ matrix.goos == 'windows' && '.exe' || '' }} \
           -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
 
       - name: Compress binary
         shell: bash
         run: |
           cd dist/${{ matrix.goos }}-${{ matrix.goarch }}
-          rm -f ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+          rm -f ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip
           if tar --version &>/dev/null; then
-            tar --overwrite -czf ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz . || true
-          fi{{ matrix.goarch }}.tar.gz ]; then
-            zip -r ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.zip . || true
+            tar --overwrite -czf ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz . || true
+          fi
+          if [ ! -f ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ]; then
+            zip -r ../dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.zip . || true
           fi
           cd -
 
@@ -148,7 +149,7 @@ jobs:
         with:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            dist/ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.*
+            dist/dynv6-ddns-${{ matrix.goos }}-${{ matrix.goarch }}.*
 
   build-android:
     name: Build Android (${{ matrix.goarch }})
@@ -181,12 +182,22 @@ jobs:
             export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang
           else
             export CC=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
-           ../ddns-dynv6-android-${{ matrix.goarch }}.zip
-          if tar --version &>/dev/null; then
-            tar --overwrite -czf ../ddns-dynv6-android-${{ matrix.goarch }}.tar.gz . || true
           fi
-          if [ ! -f ../ddns-dynv6-android-${{ matrix.goarch }}.tar.gz ]; then
-            zip -r ../ddns-dynv6-android-${{ matrix.goarch }}.zip . || true
+          export CGO_ENABLED=1
+          export GOOS=android
+          export GOARCH=${{ matrix.goarch }}
+          go build -o dist/android-${{ matrix.goarch }}/dynv6-ddns -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
+
+      - name: Compress Android binary
+        shell: bash
+        run: |
+          cd dist/android-${{ matrix.goarch }}
+          rm -f ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz ../dynv6-ddns-android-${{ matrix.goarch }}.zip
+          if tar --version &>/dev/null; then
+            tar --overwrite -czf ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz . || true
+          fi
+          if [ ! -f ../dynv6-ddns-android-${{ matrix.goarch }}.tar.gz ]; then
+            zip -r ../dynv6-ddns-android-${{ matrix.goarch }}.zip . || true
           fi
           cd -
 
@@ -195,7 +206,7 @@ jobs:
         with:
           name: artifact-android-${{ matrix.goarch }}
           path: |
-            dist/ddns-dynv6-android-${{ matrix.goarch }}.*
+            dist/dynv6-ddns-android-${{ matrix.goarch }}.*
 
   release:
     name: Release

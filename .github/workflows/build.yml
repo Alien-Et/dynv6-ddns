@@ -213,6 +213,8 @@ jobs:
     needs: [build, build-android]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write  # 添加权限以允许创建和更新 Release
     steps:
       - name: Checkout
         uses: actions/checkout@v4

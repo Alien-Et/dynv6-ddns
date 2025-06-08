@@ -3,6 +3,7 @@ name: CI and Release
 on:
   push:
     branches: [main]
+    tags: ["v*.*.*"]
   pull_request:
     branches: [main]
 
@@ -133,15 +134,10 @@ jobs:
       - name: Compress binary
         shell: bash
         run: |
-          cd dist
-          rm -f ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.zip
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            cd ${{ matrix.goos }}-${{ matrix.goarch }}
-            zip ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.zip *
-            cd ..
-          else
-            tar -czf ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz -C ${{ matrix.goos }}-${{ matrix.goarch }} .
-          fi
+          cd dist/${{ matrix.goos }}-${{ matrix.goarch }}
+          rm -f ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          tar -czf ../ddns-dynv6-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz *
+          cd -
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -184,15 +180,15 @@ jobs:
           fi
           export CGO_ENABLED=1
           export GOOS=android
-          export GOARCH=${{ matrix.goarch }}
-          go build -o dist/android-${{ matrix.goarch }}/ddns-dynv6 -ldflags "-X main.version=${{ github.ref_name || 'dev' }}"
+          exportref_name || 'dev' }}"
 
       - name: Compress Android binary
         shell: bash
         run: |
-          cd dist
-          rm -f ddns-dynv6-android-${{ matrix.goarch }}.tar.gz
-          tar -czf ddns-dynv6-android-${{ matrix.goarch }}.tar.gz -C android-${{ matrix.goarch }} .
+          cd dist/android-${{ matrix.goarch }}
+          rm -f ../ddns-dynv6-android-${{ matrix.goarch }}.tar.gz
+          tar -czf ../ddns-dynv6-android-${{ matrix.goarch }}.tar.gz *
+          cd -
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
@@ -205,6 +201,7 @@ jobs:
     name: Release
     needs: [build, build-android]
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -217,13 +214,11 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "auto-${{ github.run_number }}"
-          name: "Auto Release ${{ github.run_number }}"
-          files: release-assets/**/*.{tar.gz,zip}
+          files: release-assets/**/*.tar.gz
           draft: false
           prerelease: false
           body: |
-            🎉 自动发布 ${{ github.run_number }}
+            🎉 Release ${{ github.ref_name }}
             支持平台和架构：
             - Linux, Windows, macOS: amd64, 386, arm, arm64, loong64, mips, mipsle, mips64, mips64le, riscv64
             - Android: arm, arm64
